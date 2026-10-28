@@ -1,5 +1,8 @@
 package com.example.ui.components
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,9 +17,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Thermostat
+import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.Security
+import androidx.compose.material.icons.rounded.Thermostat
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -24,6 +27,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -65,8 +69,8 @@ fun DevicePanel(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        imageVector = Icons.Default.Security,
-                        contentDescription = "Ícone Shizuku",
+                        imageVector = Icons.Rounded.Security,
+                        contentDescription = null,
                         tint = MaterialTheme.colorScheme.secondary,
                         modifier = Modifier.size(20.dp)
                     )
@@ -80,13 +84,14 @@ fun DevicePanel(
                     )
                 }
 
-                val (badgeColor, statusText) = when (shizukuStatus) {
+                val (targetBadgeColor, statusText) = when (shizukuStatus) {
                     ShizukuStatus.CONNECTED -> SuccessGreen to "Conectado"
                     ShizukuStatus.NO_PERMISSION -> FireAmber to "Sem autorização"
                     ShizukuStatus.DISCONNECTED -> ErrorRed to "Desconectado"
                     ShizukuStatus.UNAVAILABLE -> Color.Gray to "Indisponível"
                 }
 
+                val badgeColor by animateColorAsState(targetBadgeColor, tween(200), label = "shizukuBadge")
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -121,8 +126,8 @@ fun DevicePanel(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        imageVector = Icons.Default.Memory,
-                        contentDescription = "Ícone memória RAM",
+                        imageVector = Icons.Rounded.Memory,
+                        contentDescription = null,
                         tint = CyanAccent,
                         modifier = Modifier.size(18.dp)
                     )
@@ -146,9 +151,14 @@ fun DevicePanel(
             }
 
             if (ramDiagnostic != null) {
+                val ramProgress by animateFloatAsState(
+                    targetValue = ramDiagnostic.usedPercentage / 100f,
+                    animationSpec = tween(300),
+                    label = "ramProgress"
+                )
                 Spacer(modifier = Modifier.height(6.dp))
                 LinearProgressIndicator(
-                    progress = { ramDiagnostic.usedPercentage / 100f },
+                    progress = { ramProgress },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(6.dp)
@@ -168,8 +178,8 @@ fun DevicePanel(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        imageVector = Icons.Default.Thermostat,
-                        contentDescription = "Ícone temperatura",
+                        imageVector = Icons.Rounded.Thermostat,
+                        contentDescription = null,
                         tint = FireAmber,
                         modifier = Modifier.size(18.dp)
                     )

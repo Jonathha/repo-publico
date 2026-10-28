@@ -1,10 +1,10 @@
 package com.example.ui.components
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.SportsEsports
-import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.SportsEsports
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -22,6 +22,14 @@ fun BottomNavBar(
     onNavigate: (AppScreen) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val itemColors = NavigationBarItemDefaults.colors(
+        selectedIconColor = MaterialTheme.colorScheme.primary,
+        selectedTextColor = MaterialTheme.colorScheme.primary,
+        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        indicatorColor = MaterialTheme.colorScheme.primaryContainer
+    )
+
     NavigationBar(
         modifier = modifier,
         containerColor = MaterialTheme.colorScheme.surface,
@@ -30,53 +38,37 @@ fun BottomNavBar(
         NavigationBarItem(
             selected = currentScreen == AppScreen.HOME,
             onClick = { onNavigate(AppScreen.HOME) },
-            icon = { Icon(Icons.Default.Home, contentDescription = "Início") },
+            icon = { Icon(Icons.Rounded.Home, contentDescription = null) },
             label = { Text("Início") },
             modifier = Modifier.testTag("nav_home"),
-            colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = MaterialTheme.colorScheme.primary,
-                selectedTextColor = MaterialTheme.colorScheme.primary,
-                indicatorColor = MaterialTheme.colorScheme.primaryContainer
-            )
+            colors = itemColors
         )
 
         NavigationBarItem(
             selected = currentScreen == AppScreen.FREE_FIRE,
             onClick = { onNavigate(AppScreen.FREE_FIRE) },
-            icon = { Icon(Icons.Default.SportsEsports, contentDescription = "Free Fire") },
+            icon = { Icon(Icons.Rounded.SportsEsports, contentDescription = null) },
             label = { Text("Free Fire") },
             modifier = Modifier.testTag("nav_freefire"),
-            colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = MaterialTheme.colorScheme.primary,
-                selectedTextColor = MaterialTheme.colorScheme.primary,
-                indicatorColor = MaterialTheme.colorScheme.primaryContainer
-            )
+            colors = itemColors
         )
 
         NavigationBarItem(
             selected = currentScreen == AppScreen.TWEAKS,
             onClick = { onNavigate(AppScreen.TWEAKS) },
-            icon = { Icon(Icons.Default.Tune, contentDescription = "Ajustes") },
+            icon = { Icon(Icons.Rounded.Tune, contentDescription = null) },
             label = { Text("Ajustes") },
             modifier = Modifier.testTag("nav_tweaks"),
-            colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = MaterialTheme.colorScheme.primary,
-                selectedTextColor = MaterialTheme.colorScheme.primary,
-                indicatorColor = MaterialTheme.colorScheme.primaryContainer
-            )
+            colors = itemColors
         )
 
         NavigationBarItem(
             selected = currentScreen == AppScreen.HISTORY,
             onClick = { onNavigate(AppScreen.HISTORY) },
-            icon = { Icon(Icons.Default.History, contentDescription = "Histórico") },
+            icon = { Icon(Icons.Rounded.History, contentDescription = null) },
             label = { Text("Histórico") },
             modifier = Modifier.testTag("nav_history"),
-            colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = MaterialTheme.colorScheme.primary,
-                selectedTextColor = MaterialTheme.colorScheme.primary,
-                indicatorColor = MaterialTheme.colorScheme.primaryContainer
-            )
+            colors = itemColors
         )
     }
 }

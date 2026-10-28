@@ -1,6 +1,11 @@
 package com.example
 
 import android.os.Bundle
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -59,45 +64,56 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
             .fillMaxSize()
             .padding(innerPadding)
 
-        when (uiState.currentScreen) {
-            AppScreen.HOME -> HomeScreen(
-                uiState = uiState,
-                onSettingsClick = { viewModel.navigateTo(AppScreen.SETTINGS) },
-                onOptimizeClick = { viewModel.optimizeNow() },
-                onNavigate = { viewModel.navigateTo(it) },
-                onRequestShizukuPermission = { viewModel.requestShizukuPermission() },
-                modifier = contentModifier
-            )
+        AnimatedContent(
+            targetState = uiState.currentScreen,
+            transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
+            label = "screenTransition"
+        ) { screen ->
+            when (screen) {
+                AppScreen.HOME -> HomeScreen(
+                    shizukuStatus = uiState.shizukuStatus,
+                    ramDiagnostic = uiState.ramDiagnostic,
+                    thermalDiagnostic = uiState.thermalDiagnostic,
+                    isOptimizing = uiState.isOptimizing,
+                    currentProgressText = uiState.currentProgressText,
+                    lastOptimizationSummary = uiState.lastOptimizationSummary,
+                    onSettingsClick = { viewModel.navigateTo(AppScreen.SETTINGS) },
+                    onOptimizeClick = { viewModel.optimizeNow() },
+                    onNavigate = { viewModel.navigateTo(it) },
+                    onRequestShizukuPermission = { viewModel.requestShizukuPermission() },
+                    modifier = contentModifier
+                )
 
-            AppScreen.FREE_FIRE -> FreeFireScreen(
-                uiState = uiState,
-                onSelectPackage = { viewModel.selectFreeFirePackage(it) },
-                onApplyTweak = { viewModel.toggleTweak(it) },
-                onRestoreTweak = { viewModel.restoreTweak(it) },
-                onLaunchGame = { viewModel.launchFreeFire() },
-                modifier = contentModifier
-            )
+                AppScreen.FREE_FIRE -> FreeFireScreen(
+                    uiState = uiState,
+                    onSelectPackage = { viewModel.selectFreeFirePackage(it) },
+                    onApplyTweak = { viewModel.toggleTweak(it) },
+                    onRestoreTweak = { viewModel.restoreTweak(it) },
+                    onLaunchGame = { viewModel.launchFreeFire() },
+                    modifier = contentModifier
+                )
 
-            AppScreen.TWEAKS -> TweaksScreen(
-                uiState = uiState,
-                onToggleTweak = { viewModel.toggleTweak(it) },
-                onRestoreTweak = { viewModel.restoreTweak(it) },
-                onRestoreAll = { viewModel.restoreAllTweaks() },
-                modifier = contentModifier
-            )
+                AppScreen.TWEAKS -> TweaksScreen(
+                    uiState = uiState,
+                    onToggleTweak = { viewModel.toggleTweak(it) },
+                    onRestoreTweak = { viewModel.restoreTweak(it) },
+                    onRestoreAll = { viewModel.restoreAllTweaks() },
+                    modifier = contentModifier
+                )
 
-            AppScreen.HISTORY -> HistoryScreen(
-                historyList = uiState.historyList,
-                onClearHistory = { viewModel.clearHistory() },
-                modifier = contentModifier
-            )
+                AppScreen.HISTORY -> HistoryScreen(
+                    historyList = uiState.historyList,
+                    onClearHistory = { viewModel.clearHistory() },
+                    modifier = contentModifier
+                )
 
-            AppScreen.SETTINGS -> SettingsScreen(
-                uiState = uiState,
-                onBackClick = { viewModel.navigateTo(AppScreen.HOME) },
-                onRequestShizukuPermission = { viewModel.requestShizukuPermission() },
-                modifier = contentModifier
-            )
+                AppScreen.SETTINGS -> SettingsScreen(
+                    uiState = uiState,
+                    onBackClick = { viewModel.navigateTo(AppScreen.HOME) },
+                    onRequestShizukuPermission = { viewModel.requestShizukuPermission() },
+                    modifier = contentModifier
+                )
+            }
         }
     }
 }

@@ -1,8 +1,14 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,10 +23,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.SportsEsports
-import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.SportsEsports
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -31,6 +37,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -38,14 +45,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.data.shizuku.ShizukuStatus
+import com.example.data.system.RamDiagnostic
+import com.example.data.system.ThermalDiagnostic
 import com.example.ui.components.DevicePanel
 import com.example.ui.components.HeaderBar
 import com.example.ui.navigation.AppScreen
-import com.example.ui.viewmodel.MainUiState
 
 @Composable
 fun HomeScreen(
-    uiState: MainUiState,
+    shizukuStatus: ShizukuStatus,
+    ramDiagnostic: RamDiagnostic?,
+    thermalDiagnostic: ThermalDiagnostic?,
+    isOptimizing: Boolean,
+    currentProgressText: String?,
+    lastOptimizationSummary: String?,
     onSettingsClick: () -> Unit,
     onOptimizeClick: () -> Unit,
     onNavigate: (AppScreen) -> Unit,
@@ -66,7 +79,11 @@ fun HomeScreen(
         )
 
         // Banner informativo se Shizuku precisar de permissão
-        if (uiState.shizukuStatus == ShizukuStatus.NO_PERMISSION) {
+        AnimatedVisibility(
+            visible = shizukuStatus == ShizukuStatus.NO_PERMISSION,
+            enter = expandVertically(tween(200)) + fadeIn(tween(200)),
+            exit = shrinkVertically(tween(200)) + fadeOut(tween(200))
+        ) {
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -100,9 +117,9 @@ fun HomeScreen(
 
         // Painel do dispositivo (RAM, Temperatura e Status Shizuku - Indicadores estáticos)
         DevicePanel(
-            shizukuStatus = uiState.shizukuStatus,
-            ramDiagnostic = uiState.ramDiagnostic,
-            thermalDiagnostic = uiState.thermalDiagnostic
+            shizukuStatus = shizukuStatus,
+            ramDiagnostic = ramDiagnostic,
+            thermalDiagnostic = thermalDiagnostic
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -111,7 +128,8 @@ fun HomeScreen(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp),
+                .padding(horizontal = 20.dp)
+                .animateContentSize(tween(200)),
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
@@ -123,41 +141,60 @@ fun HomeScreen(
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                val buttonContainer by animateColorAsState(
+                    targetValue = if (isOptimizing) {
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                    animationSpec = tween(150),
+                    label = "optimizeButtonColor"
+                )
                 Button(
                     onClick = onOptimizeClick,
-                    enabled = !uiState.isOptimizing,
+                    enabled = !isOptimizing,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(58.dp)
                         .testTag("optimize_button"),
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
+                        containerColor = buttonContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        disabledContainerColor = buttonContainer,
+                        disabledContentColor = MaterialTheme.colorScheme.onPrimary
                     )
                 ) {
-                    if (uiState.isOptimizing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            strokeWidth = 2.5.dp
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = "Otimizando…",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.Bolt,
-                            contentDescription = "Otimizar agora",
-                            modifier = Modifier.size(26.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Otimizar agora",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                        )
+                    Crossfade(
+                        targetState = isOptimizing,
+                        animationSpec = tween(150),
+                        label = "optimizeButtonContent"
+                    ) { optimizing ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (optimizing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    strokeWidth = 2.5.dp
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(
+                                    text = "Otimizando…",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Rounded.Bolt,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Otimizar agora",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -172,12 +209,12 @@ fun HomeScreen(
 
                 // Progresso e Resultado em tempo real
                 AnimatedVisibility(
-                    visible = uiState.isOptimizing && uiState.currentProgressText != null,
-                    enter = fadeIn(),
-                    exit = fadeOut()
+                    visible = isOptimizing && currentProgressText != null,
+                    enter = expandVertically(tween(200)) + fadeIn(tween(200)),
+                    exit = shrinkVertically(tween(200)) + fadeOut(tween(200))
                 ) {
                     Text(
-                        text = uiState.currentProgressText ?: "",
+                        text = currentProgressText ?: "",
                         style = MaterialTheme.typography.labelMedium.copy(
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.primary
@@ -188,15 +225,15 @@ fun HomeScreen(
                 }
 
                 AnimatedVisibility(
-                    visible = !uiState.isOptimizing && uiState.lastOptimizationSummary != null,
-                    enter = fadeIn(),
-                    exit = fadeOut()
+                    visible = !isOptimizing && lastOptimizationSummary != null,
+                    enter = expandVertically(tween(200)) + fadeIn(tween(200)),
+                    exit = shrinkVertically(tween(200)) + fadeOut(tween(200))
                 ) {
                     Text(
-                        text = uiState.lastOptimizationSummary ?: "",
+                        text = lastOptimizationSummary ?: "",
                         style = MaterialTheme.typography.labelMedium.copy(
                             fontWeight = FontWeight.SemiBold,
-                            color = if (uiState.lastOptimizationSummary?.startsWith("Falha") == true) {
+                            color = if (lastOptimizationSummary?.startsWith("Falha") == true) {
                                 MaterialTheme.colorScheme.error
                             } else {
                                 MaterialTheme.colorScheme.secondary
@@ -243,8 +280,8 @@ fun HomeScreen(
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.SportsEsports,
-                        contentDescription = "Modo Free Fire",
+                        imageVector = Icons.Rounded.SportsEsports,
+                        contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(24.dp)
                     )
@@ -263,7 +300,7 @@ fun HomeScreen(
                     }
                 }
                 Icon(
-                    imageVector = Icons.Default.ChevronRight,
+                    imageVector = Icons.Rounded.ChevronRight,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -292,8 +329,8 @@ fun HomeScreen(
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Tune,
-                        contentDescription = "Ajustes avançados",
+                        imageVector = Icons.Rounded.Tune,
+                        contentDescription = null,
                         tint = MaterialTheme.colorScheme.secondary,
                         modifier = Modifier.size(24.dp)
                     )
@@ -312,7 +349,7 @@ fun HomeScreen(
                     }
                 }
                 Icon(
-                    imageVector = Icons.Default.ChevronRight,
+                    imageVector = Icons.Rounded.ChevronRight,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )

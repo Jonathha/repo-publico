@@ -3,6 +3,7 @@ package com.example.ui.components
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,6 +26,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -34,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.shizuku.ShizukuStatus
 import com.example.data.system.RamDiagnostic
 import com.example.data.system.ThermalDiagnostic
@@ -53,154 +56,234 @@ fun DevicePanel(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
-        )
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(
-            modifier = Modifier.padding(16.dp)
+            modifier = Modifier.padding(18.dp)
         ) {
-            // Shizuku Status Row
+            // Shizuku Header Status Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Rounded.Security,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Serviço Shizuku",
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Security,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(18.dp)
                         )
-                    )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "SHIZUKU CORE",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        )
+                        Text(
+                            text = "Acesso Privilegiado ADB",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        )
+                    }
                 }
 
                 val (targetBadgeColor, statusText) = when (shizukuStatus) {
                     ShizukuStatus.CONNECTED -> SuccessGreen to "Conectado"
-                    ShizukuStatus.NO_PERMISSION -> FireAmber to "Sem autorização"
+                    ShizukuStatus.NO_PERMISSION -> FireAmber to "Sem permissão"
                     ShizukuStatus.DISCONNECTED -> ErrorRed to "Desconectado"
                     ShizukuStatus.UNAVAILABLE -> Color.Gray to "Indisponível"
                 }
 
                 val badgeColor by animateColorAsState(targetBadgeColor, tween(200), label = "shizukuBadge")
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(badgeColor.copy(alpha = 0.15f))
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = badgeColor.copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, badgeColor.copy(alpha = 0.25f))
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(badgeColor)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = statusText,
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontWeight = FontWeight.SemiBold,
-                            color = badgeColor
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(badgeColor)
                         )
-                    )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = statusText,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = badgeColor
+                            )
+                        )
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // RAM Diagnostic (Non-interactive indicator)
+            // Diagnostic Tiles (RAM & Thermals - Informational metrics)
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Rounded.Memory,
-                        contentDescription = null,
-                        tint = CyanAccent,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Uso de RAM",
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                // RAM Tile
+                Surface(
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "RAM",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+                            Icon(
+                                imageVector = Icons.Rounded.Memory,
+                                contentDescription = null,
+                                tint = CyanAccent,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        val percentText = if (ramDiagnostic != null) "${ramDiagnostic.usedPercentage}%" else "--"
+                        Text(
+                            text = percentText,
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (ramDiagnostic?.isLowMemory == true) ErrorRed else MaterialTheme.colorScheme.onSurface
+                            )
                         )
-                    )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        if (ramDiagnostic != null) {
+                            val ramProgress by animateFloatAsState(
+                                targetValue = ramDiagnostic.usedPercentage / 100f,
+                                animationSpec = tween(300),
+                                label = "ramProgress"
+                            )
+                            LinearProgressIndicator(
+                                progress = { ramProgress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .clip(RoundedCornerShape(2.dp)),
+                                color = if (ramDiagnostic.isLowMemory) ErrorRed else CyanAccent,
+                                trackColor = MaterialTheme.colorScheme.surface
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            val usedGb = ramDiagnostic.usedBytes.toDouble() / (1024 * 1024 * 1024)
+                            val totalGb = ramDiagnostic.totalBytes.toDouble() / (1024 * 1024 * 1024)
+                            Text(
+                                text = String.format(java.util.Locale.US, "%.1f / %.1f GB", usedGb, totalGb),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+                        } else {
+                            Text(
+                                text = "Não disponível",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+                        }
+                    }
                 }
 
-                Text(
-                    text = ramDiagnostic?.formattedSummary ?: "Não disponível",
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                )
-            }
+                // Thermal Tile
+                Surface(
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "TÉRMICO",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+                            Icon(
+                                imageVector = Icons.Rounded.Thermostat,
+                                contentDescription = null,
+                                tint = FireAmber,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
 
-            if (ramDiagnostic != null) {
-                val ramProgress by animateFloatAsState(
-                    targetValue = ramDiagnostic.usedPercentage / 100f,
-                    animationSpec = tween(300),
-                    label = "ramProgress"
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                LinearProgressIndicator(
-                    progress = { ramProgress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp)),
-                    color = if (ramDiagnostic.isLowMemory) ErrorRed else CyanAccent,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            }
+                        Spacer(modifier = Modifier.height(6.dp))
 
-            Spacer(modifier = Modifier.height(14.dp))
+                        val tempText = if (thermalDiagnostic?.batteryTempCelsius != null) {
+                            String.format(java.util.Locale.US, "%.1f°C", thermalDiagnostic.batteryTempCelsius)
+                        } else {
+                            thermalDiagnostic?.thermalStatusText ?: "--"
+                        }
 
-            // Temperature Diagnostic (Non-interactive indicator)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Rounded.Thermostat,
-                        contentDescription = null,
-                        tint = FireAmber,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Temperatura",
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        Text(
+                            text = tempText,
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (thermalDiagnostic?.isSevereOrCritical == true) ErrorRed else MaterialTheme.colorScheme.onSurface
+                            )
                         )
-                    )
-                }
 
-                Text(
-                    text = thermalDiagnostic?.formattedSummary ?: "Não disponível",
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (thermalDiagnostic?.isSevereOrCritical == true) ErrorRed else MaterialTheme.colorScheme.onSurface
-                    )
-                )
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        val statusSubtitle = thermalDiagnostic?.thermalStatusText ?: "Sensor ativo"
+                        Text(
+                            text = statusSubtitle,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 10.sp,
+                                color = if (thermalDiagnostic?.isSevereOrCritical == true) ErrorRed else SuccessGreen
+                            )
+                        )
+                    }
+                }
             }
         }
     }
 }
+

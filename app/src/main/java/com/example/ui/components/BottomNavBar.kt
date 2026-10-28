@@ -13,7 +13,10 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import com.example.ui.navigation.AppScreen
 
 @Composable
@@ -30,8 +33,17 @@ fun BottomNavBar(
         indicatorColor = MaterialTheme.colorScheme.primaryContainer
     )
 
+    val topBorderColor = MaterialTheme.colorScheme.outlineVariant
+
     NavigationBar(
-        modifier = modifier,
+        modifier = modifier.drawBehind {
+            drawLine(
+                color = topBorderColor,
+                start = Offset(0f, 0f),
+                end = Offset(size.width, 0f),
+                strokeWidth = 1.dp.toPx()
+            )
+        },
         containerColor = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface
     ) {

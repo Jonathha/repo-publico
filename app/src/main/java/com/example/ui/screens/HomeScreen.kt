@@ -9,7 +9,10 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -40,6 +44,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -89,10 +94,11 @@ fun HomeScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp, vertical = 6.dp),
                 shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.primaryContainer
+                color = MaterialTheme.colorScheme.primaryContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
             ) {
                 Row(
-                    modifier = Modifier.padding(12.dp),
+                    modifier = Modifier.padding(14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -115,32 +121,64 @@ fun HomeScreen(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Painel do dispositivo (RAM, Temperatura e Status Shizuku - Indicadores estáticos)
+        // Painel do dispositivo (RAM, Temperatura e Status Shizuku - Indicadores estáticos em tiles)
         DevicePanel(
             shizukuStatus = shizukuStatus,
             ramDiagnostic = ramDiagnostic,
             thermalDiagnostic = thermalDiagnostic
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
-        // Área central (Área 2: Botão principal "Otimizar agora")
+        // Área central (Área 2: Botão principal "Otimizar agora" em Card Hero destacado)
         Card(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
                 .animateContentSize(tween(200)),
             shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                containerColor = MaterialTheme.colorScheme.surface
             )
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(24.dp),
+                    .padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                // Status pill de prontidão do sistema
+                Surface(
+                    shape = RoundedCornerShape(100.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.padding(bottom = 16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (isOptimizing) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.secondary
+                                )
+                        )
+                        Spacer(modifier = Modifier.width(7.dp))
+                        Text(
+                            text = if (isOptimizing) "OTIMIZANDO SISTEMA" else "PRONTO PARA JOGAR",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        )
+                    }
+                }
+
                 val buttonContainer by animateColorAsState(
                     targetValue = if (isOptimizing) {
                         MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
@@ -150,6 +188,7 @@ fun HomeScreen(
                     animationSpec = tween(150),
                     label = "optimizeButtonColor"
                 )
+
                 Button(
                     onClick = onOptimizeClick,
                     enabled = !isOptimizing,
@@ -158,6 +197,7 @@ fun HomeScreen(
                         .height(58.dp)
                         .testTag("optimize_button"),
                     shape = RoundedCornerShape(16.dp),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = buttonContainer,
                         contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -198,61 +238,80 @@ fun HomeScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 Text(
-                    text = "Aplica ajustes de compilação nativa ART, resposta de toque, taxa de atualização e liberação de memória para o Free Fire.",
+                    text = "Aplica compilação nativa ART, resposta de toque, taxa de atualização e liberação de memória para o Free Fire.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
 
-                // Progresso e Resultado em tempo real
+                // Progresso em tempo real
                 AnimatedVisibility(
                     visible = isOptimizing && currentProgressText != null,
                     enter = expandVertically(tween(200)) + fadeIn(tween(200)),
                     exit = shrinkVertically(tween(200)) + fadeOut(tween(200))
                 ) {
-                    Text(
-                        text = currentProgressText ?: "",
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary
-                        ),
-                        modifier = Modifier.padding(top = 10.dp),
-                        textAlign = TextAlign.Center
-                    )
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp)
+                    ) {
+                        Text(
+                            text = currentProgressText ?: "",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            ),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
 
+                // Resultado após otimização
                 AnimatedVisibility(
                     visible = !isOptimizing && lastOptimizationSummary != null,
                     enter = expandVertically(tween(200)) + fadeIn(tween(200)),
                     exit = shrinkVertically(tween(200)) + fadeOut(tween(200))
                 ) {
-                    Text(
-                        text = lastOptimizationSummary ?: "",
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (lastOptimizationSummary?.startsWith("Falha") == true) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.secondary
-                            }
-                        ),
-                        modifier = Modifier.padding(top = 10.dp),
-                        textAlign = TextAlign.Center
-                    )
+                    val isFailure = lastOptimizationSummary?.startsWith("Falha") == true
+                    val statusColor = if (isFailure) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = statusColor.copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, statusColor.copy(alpha = 0.3f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp)
+                    ) {
+                        Text(
+                            text = lastOptimizationSummary ?: "",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                color = statusColor
+                            ),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Acessos rápidos (Áreas 3 e 4)
+        // Seção Acessos rápidos (Áreas 3 e 4)
         Text(
-            text = "Acessos Rápidos",
-            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-            color = MaterialTheme.colorScheme.onBackground,
+            text = "ACESSOS RÁPIDOS",
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            ),
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
         )
 
@@ -263,9 +322,10 @@ fun HomeScreen(
             onClick = { onNavigate(AppScreen.FREE_FIRE) },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 6.dp)
+                .padding(horizontal = 20.dp, vertical = 5.dp)
                 .testTag("quick_freefire_button"),
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
             Row(
@@ -279,12 +339,21 @@ fun HomeScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.SportsEsports,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Rounded.SportsEsports,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.width(14.dp))
                     Column {
                         Text(
@@ -292,6 +361,7 @@ fun HomeScreen(
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                             color = MaterialTheme.colorScheme.onSurface
                         )
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = "Reúne as otimizações relevantes para o jogo",
                             style = MaterialTheme.typography.bodySmall,
@@ -312,9 +382,10 @@ fun HomeScreen(
             onClick = { onNavigate(AppScreen.TWEAKS) },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 6.dp)
+                .padding(horizontal = 20.dp, vertical = 5.dp)
                 .testTag("quick_tweaks_button"),
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
             Row(
@@ -328,12 +399,21 @@ fun HomeScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Tune,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.size(24.dp)
-                    )
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.25f)),
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Rounded.Tune,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.width(14.dp))
                     Column {
                         Text(
@@ -341,6 +421,7 @@ fun HomeScreen(
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                             color = MaterialTheme.colorScheme.onSurface
                         )
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = "Apresenta os controles individuais e seus efeitos",
                             style = MaterialTheme.typography.bodySmall,

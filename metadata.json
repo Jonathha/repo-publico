@@ -1,0 +1,6 @@
+{
+  "name": "FF Game Optimizer",
+  "description": "Otimizador nativo de sistema para Free Fire com integração Shizuku, diagnóstico do aparelho e ajustes de desempenho",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

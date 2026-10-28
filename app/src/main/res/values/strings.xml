@@ -1,0 +1,18 @@
+<resources>
+    <string name="app_name">FF Game Optimizer</string>
+    <string name="app_short_name">FF Optimizer</string>
+    <string name="title_home">Início</string>
+    <string name="title_freefire">Free Fire</string>
+    <string name="title_tweaks">Ajustes</string>
+    <string name="title_history">Histórico</string>
+    <string name="title_settings">Configurações</string>
+    <string name="optimize_now">Otimizar agora</string>
+    <string name="optimizing">Executando ajustes…</string>
+    <string name="quick_ff_mode">Modo Free Fire</string>
+    <string name="quick_advanced_tweaks">Ajustes avançados</string>
+    <string name="shizuku_connected">Conectado</string>
+    <string name="shizuku_disconnected">Desconectado</string>
+    <string name="shizuku_no_permission">Sem autorização</string>
+    <string name="shizuku_unavailable">Indisponível</string>
+</resources>
+

@@ -78,25 +78,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshAll() {
-        val context = getApplication<Application>().applicationContext
-        val ram = DeviceDiagnostics.readRam(context)
-        val thermals = DeviceDiagnostics.readThermals(context)
-        val spec = DeviceDiagnostics.readDeviceSpec()
-        val packages = FreeFireDetector.detectInstalledPackages(context)
-        val primaryPkg = packages.firstOrNull { it.isInstalled }?.packageName
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>().applicationContext
+            val ram = DeviceDiagnostics.readRam(context)
+            val thermals = DeviceDiagnostics.readThermals(context)
+            val spec = DeviceDiagnostics.readDeviceSpec()
+            val packages = FreeFireDetector.detectInstalledPackages(context)
+            val primaryPkg = packages.firstOrNull { it.isInstalled }?.packageName
+            val shizuku = shizukuManager.queryCurrentStatus()
 
-        _uiState.update {
-            it.copy(
-                ramDiagnostic = ram,
-                thermalDiagnostic = thermals,
-                deviceSpec = spec,
-                freeFirePackages = packages,
-                selectedPackage = primaryPkg,
-                shizukuStatus = shizukuManager.queryCurrentStatus()
-            )
+            _uiState.update {
+                it.copy(
+                    ramDiagnostic = ram,
+                    thermalDiagnostic = thermals,
+                    deviceSpec = spec,
+                    freeFirePackages = packages,
+                    selectedPackage = primaryPkg,
+                    shizukuStatus = shizuku
+                )
+            }
+
+            refreshTweaksList()
         }
-
-        refreshTweaksList()
     }
 
     fun selectFreeFirePackage(packageName: String) {

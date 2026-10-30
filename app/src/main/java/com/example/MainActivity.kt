@@ -1,15 +1,11 @@
 package com.example
 
 import android.os.Bundle
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
@@ -60,17 +56,12 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
             }
         }
     ) { innerPadding ->
-        AnimatedContent(
-            targetState = uiState.currentScreen,
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
-            transitionSpec = {
-                (fadeIn(animationSpec = tween(180, easing = androidx.compose.animation.core.FastOutSlowInEasing)) togetherWith
-                    fadeOut(animationSpec = tween(90, easing = androidx.compose.animation.core.FastOutLinearInEasing))).using(null)
-            },
-            label = "screenTransition"
-        ) { screen ->
+                .padding(innerPadding)
+        ) {
+            val screen = uiState.currentScreen
             when (screen) {
                 AppScreen.HOME -> HomeScreen(
                     shizukuStatus = uiState.shizukuStatus,

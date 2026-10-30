@@ -1,6 +1,12 @@
 package com.example
 
+import android.Manifest
+import android.os.Build
 import android.os.Bundle
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -34,6 +40,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.components.BottomNavBar
+import com.example.ui.components.OverlayDialogState
+import com.example.ui.components.OverlayPermissionDialog
 import com.example.ui.navigation.AppScreen
 import com.example.ui.navigation.backTarget
 import com.example.ui.screens.FreeFireScreen
@@ -69,14 +77,16 @@ fun MainApp(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var pendingOverlay by rememberSaveable { mutableStateOf(false) }
+    var overlayDialog by rememberSaveable { mutableStateOf(OverlayDialogState.NONE) }
 
     // Ao voltar da tela de permissão, conclui a ativação; também reconcilia o estado salvo.
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                if (pendingOverlay && Settings.canDrawOverlays(context)) {
+                if (pendingOverlay) {
+                    // Só ativa se a permissão foi realmente concedida; a espera termina em qualquer caso.
                     pendingOverlay = false
-                    viewModel.setOverlayEnabled(true)
+                    if (Settings.canDrawOverlays(context)) viewModel.setOverlayEnabled(true) else viewModel.syncOverlayState()
                 } else {
                     viewModel.syncOverlayState()
                 }
@@ -91,24 +101,64 @@ fun MainApp(
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { logsViewModel.runPingSampler() }
     }
 
+    fun needsNotifications() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+        PackageManager.PERMISSION_GRANTED
+
+    // Última etapa: sobreposição. Só ativa o painel quando a permissão já está concedida.
+    val requestOverlayAccess: () -> Unit = {
+        if (Settings.canDrawOverlays(context)) {
+            viewModel.setOverlayEnabled(true)
+        } else {
+            pendingOverlay = true
+            context.startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${context.packageName}")
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+    }
+
+    val notificationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) requestOverlayAccess() else overlayDialog = OverlayDialogState.NOTIFICATIONS_DENIED
+    }
+
     val onOverlayToggle: (Boolean) -> Unit = { enable ->
         when {
             !enable -> {
                 pendingOverlay = false
                 viewModel.setOverlayEnabled(false)
             }
-            Settings.canDrawOverlays(context) -> viewModel.setOverlayEnabled(true)
-            else -> {
-                pendingOverlay = true
-                context.startActivity(
-                    Intent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:${context.packageName}")
-                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                )
-            }
+            needsNotifications() || !Settings.canDrawOverlays(context) -> overlayDialog = OverlayDialogState.ASK
+            else -> viewModel.setOverlayEnabled(true)
         }
     }
+
+    OverlayPermissionDialog(
+        state = overlayDialog,
+        needsNotifications = needsNotifications(),
+        needsOverlay = !Settings.canDrawOverlays(context),
+        onContinue = {
+            overlayDialog = OverlayDialogState.NONE
+            if (needsNotifications()) {
+                notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                requestOverlayAccess()
+            }
+        },
+        onOpenNotificationSettings = {
+            overlayDialog = OverlayDialogState.NONE
+            context.startActivity(
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        },
+        onDismiss = { overlayDialog = OverlayDialogState.NONE }
+    )
 
     // Trata o botão Voltar do sistema para retornar à tela inicial se estiver em outra tela
     BackHandler(enabled = uiState.currentScreen != AppScreen.HOME) {

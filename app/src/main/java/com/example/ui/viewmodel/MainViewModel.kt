@@ -20,8 +20,10 @@ import com.example.data.tweaks.TweakItem
 import com.example.overlay.GameOverlayService
 import com.example.overlay.OverlayPrefs
 import com.example.ui.navigation.AppScreen
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,7 +58,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val shizukuManager = ShizukuManager(application.applicationContext)
     private val database = AppDatabase.getInstance(application.applicationContext)
     private val tweakDao = database.tweakDao()
-    private val tweakExecutor = TweakExecutor(shizukuManager, tweakDao)
+    private val tweakExecutor = TweakExecutor(shizukuManager, tweakDao, application.packageName)
 
     // Serializa a execução de comandos Shizuku: evita vários processos shell em paralelo.
     private val tweakMutex = Mutex()
@@ -180,53 +182,84 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
 
-            val status = shizukuManager.queryCurrentStatus()
-            if (status != ShizukuStatus.CONNECTED) {
+            try {
+                // Consulta ao binder do Shizuku fora da thread principal.
+                val status = withContext(Dispatchers.IO) { shizukuManager.queryCurrentStatus() }
+                if (status != ShizukuStatus.CONNECTED) {
+                    _uiState.update {
+                        it.copy(
+                            isOptimizing = false,
+                            currentProgressText = null,
+                            lastOptimizationSummary = "Falha: Shizuku não está conectado com autorização concedida."
+                        )
+                    }
+                    return@launch
+                }
+
+                // Lista montada agora com o pacote escolhido: a copiada em `tweaks` pode estar defasada.
+                val targetPkg = _uiState.value.selectedPackage
+                val supportedTweaks = TweakCatalog.getAvailableTweaks(targetPkg, true).filter { it.isSupported }
+                var successes = 0
+                var errors = 0
+
+                for (tweak in supportedTweaks) {
+                    _uiState.update { it.copy(currentProgressText = "Aplicando: ${tweak.title}…") }
+                    val result = try {
+                        tweakMutex.withLock { tweakExecutor.applyTweak(tweak.id, targetPkg) }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (result?.isSuccess == true) {
+                        successes++
+                    } else {
+                        errors++
+                    }
+                    // Respiro entre ajustes para o sistema não engasgar com comandos em sequência.
+                    delay(100)
+                }
+
+                val summary = if (errors == 0) {
+                    "Otimização concluída com sucesso! ($successes ajustes aplicados)"
+                } else {
+                    "Otimização finalizada: $successes aplicados com sucesso, $errors falhas registradas no histórico."
+                }
+
+                refreshTweaksList()
+                val context = getApplication<Application>()
+                // Leituras de diagnóstico fora da thread principal.
+                val ram = withContext(Dispatchers.IO) { DeviceDiagnostics.readRam(context) }
+                val thermals = withContext(Dispatchers.IO) { DeviceDiagnostics.readThermals(context) }
+                val battery = withContext(Dispatchers.IO) { DeviceDiagnostics.readBatteryPercent(context) }
+                val storage = withContext(Dispatchers.IO) { DeviceDiagnostics.readStorage() }
+
                 _uiState.update {
                     it.copy(
                         isOptimizing = false,
                         currentProgressText = null,
-                        lastOptimizationSummary = "Falha: Shizuku não está conectado com autorização concedida."
+                        lastOptimizationSummary = summary,
+                        ramDiagnostic = ram,
+                        thermalDiagnostic = thermals,
+                        batteryPercent = battery,
+                        storageDiagnostic = storage
                     )
                 }
-                return@launch
-            }
-
-            val supportedTweaks = _uiState.value.tweaks.filter { it.isSupported }
-            val targetPkg = _uiState.value.selectedPackage
-            var successes = 0
-            var errors = 0
-
-            for (tweak in supportedTweaks) {
-                _uiState.update { it.copy(currentProgressText = "Aplicando: ${tweak.title}…") }
-                val result = tweakMutex.withLock { tweakExecutor.applyTweak(tweak.id, targetPkg) }
-                if (result.isSuccess) {
-                    successes++
-                } else {
-                    errors++
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isOptimizing = false,
+                        currentProgressText = null,
+                        lastOptimizationSummary = "Falha: ${e.message ?: e.javaClass.simpleName}"
+                    )
                 }
-            }
-
-            val summary = if (errors == 0) {
-                "Otimização concluída com sucesso! ($successes ajustes aplicados)"
-            } else {
-                "Otimização finalizada: $successes aplicados com sucesso, $errors falhas registradas no histórico."
-            }
-
-            refreshTweaksList()
-            val ram = DeviceDiagnostics.readRam(getApplication())
-            val thermals = DeviceDiagnostics.readThermals(getApplication())
-
-            _uiState.update {
-                it.copy(
-                    isOptimizing = false,
-                    currentProgressText = null,
-                    lastOptimizationSummary = summary,
-                    ramDiagnostic = ram,
-                    thermalDiagnostic = thermals,
-                    batteryPercent = DeviceDiagnostics.readBatteryPercent(getApplication()),
-                    storageDiagnostic = DeviceDiagnostics.readStorage()
-                )
+            } finally {
+                // Garante que o botão nunca fique preso em "Otimizando…".
+                if (_uiState.value.isOptimizing) {
+                    _uiState.update { it.copy(isOptimizing = false, currentProgressText = null) }
+                }
             }
         }
     }

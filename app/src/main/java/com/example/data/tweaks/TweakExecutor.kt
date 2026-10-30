@@ -16,7 +16,8 @@ data class ExecutionResult(
 
 class TweakExecutor(
     private val shizukuManager: ShizukuManager,
-    private val tweakDao: TweakDao
+    private val tweakDao: TweakDao,
+    private val ownPackage: String = ""
 ) {
 
     suspend fun applyTweak(
@@ -26,6 +27,8 @@ class TweakExecutor(
         val timestamp = System.currentTimeMillis()
         var actionName = "Ajuste $tweakId"
         var result: CommandResult
+        // Backup já existente (aplicação anterior): uma falha agora não pode apagá-lo.
+        val hadBackup = tweakDao.getBackup(tweakId) != null
 
         when (tweakId) {
             TweakCatalog.ID_ART_COMPILE -> {
@@ -36,7 +39,19 @@ class TweakExecutor(
                         "Pacote do Free Fire não encontrado no sistema.", timestamp
                     )
                 }
-                result = shizukuManager.execute("cmd package compile -m speed -f $targetPackage")
+                // Análise em tempo real: recompilar com -f a cada toque sobrecarrega CPU e I/O.
+                // Só compila se o app ainda não estiver em modo speed.
+                val alreadySpeed = shizukuManager
+                    .execute("dumpsys package $targetPackage | grep -m1 'status='")
+                    .stdout.contains("[status=speed]")
+                if (alreadySpeed) {
+                    backupValueIfNotExists(TweakCatalog.ID_ART_COMPILE, "speed")
+                    return@withContext logAndReturn(
+                        tweakId, actionName, targetPackage, true,
+                        "Código DEX já estava compilado em modo speed; nada a recompilar.", timestamp
+                    )
+                }
+                result = shizukuManager.execute("cmd package compile -m speed -f $targetPackage", COMPILE_TIMEOUT_MS)
                 val success = result.isSuccess || result.stdout.contains("Success", ignoreCase = true)
                 if (success) {
                     backupValueIfNotExists(TweakCatalog.ID_ART_COMPILE, "speed")
@@ -58,12 +73,11 @@ class TweakExecutor(
                 }
                 // Backup existing mode if available
                 val queryRes = shizukuManager.execute("cmd game mode get $targetPackage")
-                if (queryRes.stdout.isNotBlank()) {
-                    backupValueIfNotExists(TweakCatalog.ID_GAME_MODE, queryRes.stdout.trim())
-                }
+                // Sem leitura do modo atual, grava o padrão (1) para o ajuste constar como aplicado.
+                backupValueIfNotExists(TweakCatalog.ID_GAME_MODE, queryRes.stdout.trim().ifBlank { "1" })
                 result = shizukuManager.execute("cmd game mode 2 $targetPackage")
-                val success = result.isSuccess || result.stdout.contains("2") || result.stdout.contains("mode")
-                if (!success) {
+                val success = result.isSuccess
+                if (!success && !hadBackup) {
                     tweakDao.removeBackup(tweakId)
                 }
                 logAndReturn(
@@ -84,7 +98,7 @@ class TweakExecutor(
                 // Try setting to 120Hz or 90Hz
                 result = shizukuManager.execute("settings put system min_refresh_rate 120.0 && settings put system peak_refresh_rate 120.0")
                 val success = result.isSuccess
-                if (!success) {
+                if (!success && !hadBackup) {
                     tweakDao.removeBackup(tweakId)
                 }
                 logAndReturn(
@@ -103,7 +117,7 @@ class TweakExecutor(
 
                 result = shizukuManager.execute("settings put global window_animation_scale 0.5 && settings put global transition_animation_scale 0.5 && settings put global animator_duration_scale 0.5")
                 val success = result.isSuccess
-                if (!success) {
+                if (!success && !hadBackup) {
                     tweakDao.removeBackup(tweakId)
                 }
                 logAndReturn(
@@ -115,13 +129,37 @@ class TweakExecutor(
 
             TweakCatalog.ID_TRIM_CACHE_RAM -> {
                 actionName = "Limpeza de Memória & Processos"
-                val killRes = shizukuManager.execute("am kill-all")
-                val trimRes = shizukuManager.execute("pm trim-caches 200M")
-                val success = killRes.isSuccess || trimRes.isSuccess
-                val msg = if (success) {
-                    "Processos inativos liberados e cache aparado."
+                // Análise em tempo real: `am kill-all` derruba tudo de uma vez e trava o aparelho na reabertura.
+                // Aqui só são liberados apps de terceiros que estão rodando agora, poupando o jogo
+                // escolhido e este app. `am kill` só encerra processos seguros de matar (em segundo plano).
+                val installedRes = shizukuManager.execute("pm list packages -3")
+                val runningRes = shizukuManager.execute("ps -A -o NAME")
+                val analysisOk = installedRes.isSuccess && runningRes.isSuccess
+                val keep = setOfNotNull(targetPackage, ownPackage.ifBlank { null })
+                val victims = if (analysisOk) {
+                    val installed = installedRes.stdout.lineSequence()
+                        .map { it.trim().removePrefix("package:") }
+                        .filter { it.isNotEmpty() }
+                        .toSet()
+                    runningRes.stdout.lineSequence()
+                        .map { it.trim().substringBefore(':') }
+                        .filter { it in installed && it !in keep }
+                        .distinct()
+                        .toList()
                 } else {
-                    "Falha: ${trimRes.stderr.ifBlank { killRes.stderr }.ifBlank { "comandos recusados pelo sistema" }}"
+                    emptyList()
+                }
+                val killRes = if (victims.isNotEmpty()) {
+                    shizukuManager.execute(victims.joinToString("; ") { "am kill $it" })
+                } else {
+                    null
+                }
+                val trimRes = shizukuManager.execute("pm trim-caches 200M", TRIM_TIMEOUT_MS)
+                val success = (analysisOk && (killRes == null || killRes.isSuccess)) || trimRes.isSuccess
+                val msg = if (success) {
+                    "${victims.size} apps em segundo plano liberados e cache aparado."
+                } else {
+                    "Falha: ${trimRes.stderr.ifBlank { killRes?.stderr.orEmpty() }.ifBlank { "comandos recusados pelo sistema" }}"
                 }
                 logAndReturn(tweakId, actionName, "Sistema", success, msg, timestamp)
             }
@@ -129,11 +167,11 @@ class TweakExecutor(
             TweakCatalog.ID_LOGCAT_BUFFER -> {
                 actionName = "Buffer de Logcat (256K)"
                 val currentSizeRes = shizukuManager.execute("logcat -g")
-                backupValueIfNotExists(TweakCatalog.ID_LOGCAT_BUFFER, currentSizeRes.stdout.trim())
+                backupValueIfNotExists(TweakCatalog.ID_LOGCAT_BUFFER, currentSizeRes.stdout.trim().ifBlank { "1M" })
 
                 result = shizukuManager.execute("logcat -G 256K")
                 val success = result.isSuccess
-                if (!success) {
+                if (!success && !hadBackup) {
                     tweakDao.removeBackup(tweakId)
                 }
                 logAndReturn(
@@ -146,11 +184,15 @@ class TweakExecutor(
             TweakCatalog.ID_DISABLE_POWER_SAVE -> {
                 actionName = "Desativar Economia de Bateria"
                 val curr = shizukuManager.execute("settings get global low_power").stdout.trim()
-                backupValueIfNotExists(TweakCatalog.ID_DISABLE_POWER_SAVE, curr)
+                // low_power não definido retorna vazio/"null": grava 0 para o ajuste constar como aplicado.
+                backupValueIfNotExists(
+                    TweakCatalog.ID_DISABLE_POWER_SAVE,
+                    curr.takeUnless { it.isBlank() || it == "null" } ?: "0"
+                )
 
                 result = shizukuManager.execute("settings put global low_power 0")
                 val success = result.isSuccess
-                if (!success) {
+                if (!success && !hadBackup) {
                     tweakDao.removeBackup(tweakId)
                 }
                 logAndReturn(
@@ -262,6 +304,11 @@ class TweakExecutor(
 
             else -> ExecutionResult(tweakId, false, "Ajuste não possui restauração.")
         }
+    }
+
+    private companion object {
+        const val COMPILE_TIMEOUT_MS = 600_000L
+        const val TRIM_TIMEOUT_MS = 180_000L
     }
 
     private suspend fun backupValueIfNotExists(key: String, value: String) {

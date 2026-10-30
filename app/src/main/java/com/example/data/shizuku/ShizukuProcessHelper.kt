@@ -6,6 +6,7 @@ import rikka.shizuku.Shizuku
 import java.io.BufferedReader
 import java.io.InputStream
 import java.io.InputStreamReader
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class CommandResult(
     val exitCode: Int,
@@ -16,8 +17,9 @@ data class CommandResult(
 
 object ShizukuProcessHelper {
     private const val TAG = "ShizukuProcessHelper"
+    const val DEFAULT_TIMEOUT_MS = 120_000L
 
-    fun executeShell(command: String): CommandResult {
+    fun executeShell(command: String, timeoutMs: Long = DEFAULT_TIMEOUT_MS): CommandResult {
         return try {
             if (!Shizuku.pingBinder()) {
                 return CommandResult(
@@ -58,8 +60,49 @@ object ShizukuProcessHelper {
             val inputStream = remoteProcess.javaClass.getMethod("getInputStream").invoke(remoteProcess) as InputStream
             val errorStream = remoteProcess.javaClass.getMethod("getErrorStream").invoke(remoteProcess) as InputStream
 
-            val stdoutText = BufferedReader(InputStreamReader(inputStream)).use { it.readText() }.trim()
-            val stderrText = BufferedReader(InputStreamReader(errorStream)).use { it.readText() }.trim()
+            // stderr é drenado em paralelo: ler um fluxo depois do outro trava se o buffer do segundo encher.
+            val stderrBuffer = StringBuilder()
+            val stderrReader = Thread {
+                try {
+                    BufferedReader(InputStreamReader(errorStream)).use { stderrBuffer.append(it.readText()) }
+                } catch (_: Exception) {
+                }
+            }.apply {
+                isDaemon = true
+                start()
+            }
+
+            // Vigia: encerra o processo ao passar do limite, para não prender a fila de ajustes para sempre.
+            val timedOut = AtomicBoolean(false)
+            val watchdog = Thread {
+                try {
+                    Thread.sleep(timeoutMs)
+                    timedOut.set(true)
+                    remoteProcess.javaClass.getMethod("destroy").invoke(remoteProcess)
+                } catch (_: Exception) {
+                }
+            }.apply {
+                isDaemon = true
+                start()
+            }
+
+            val stdoutText = try {
+                BufferedReader(InputStreamReader(inputStream)).use { it.readText() }.trim()
+            } catch (e: Exception) {
+                if (timedOut.get()) "" else throw e
+            }
+            stderrReader.join(2000)
+            watchdog.interrupt()
+
+            if (timedOut.get()) {
+                return CommandResult(
+                    exitCode = -4,
+                    stdout = stdoutText,
+                    stderr = "Tempo limite de ${timeoutMs / 1000}s excedido; comando encerrado.",
+                    isSuccess = false
+                )
+            }
+            val stderrText = stderrBuffer.toString().trim()
 
             val waitForMethod = remoteProcess.javaClass.getMethod("waitFor")
             val exitCode = waitForMethod.invoke(remoteProcess) as? Int ?: 0

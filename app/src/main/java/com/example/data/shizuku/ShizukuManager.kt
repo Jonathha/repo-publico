@@ -98,7 +98,10 @@ class ShizukuManager(private val context: Context) {
         }
     }
 
-    fun execute(command: String): CommandResult {
-        return ShizukuProcessHelper.executeShell(command)
+    fun execute(
+        command: String,
+        timeoutMs: Long = ShizukuProcessHelper.DEFAULT_TIMEOUT_MS
+    ): CommandResult {
+        return ShizukuProcessHelper.executeShell(command, timeoutMs)
     }
 }

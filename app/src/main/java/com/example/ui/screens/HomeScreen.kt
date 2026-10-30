@@ -126,7 +126,16 @@ fun HomeScreen(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Painel do dispositivo (RAM, Temperatura e Status Shizuku - Indicadores estáticos em tiles)
+        // Visão geral no topo: RAM, armazenamento e bateria
+        OverviewRings(
+            ramDiagnostic = ramDiagnostic,
+            storageDiagnostic = storageDiagnostic,
+            batteryPercent = batteryPercent
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Status do dispositivo: Shizuku e temperatura
         DevicePanel(
             shizukuStatus = shizukuStatus,
             ramDiagnostic = ramDiagnostic,
@@ -369,15 +378,6 @@ fun HomeScreen(
                 )
             }
         }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Visão geral: RAM, armazenamento e bateria
-        OverviewRings(
-            ramDiagnostic = ramDiagnostic,
-            storageDiagnostic = storageDiagnostic,
-            batteryPercent = batteryPercent
-        )
 
         Spacer(modifier = Modifier.height(24.dp))
     }

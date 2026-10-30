@@ -34,13 +34,16 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.components.BottomNavBar
 import com.example.ui.navigation.AppScreen
+import com.example.ui.navigation.backTarget
 import com.example.ui.screens.FreeFireScreen
 import com.example.ui.screens.HelpScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.HomeScreen
+import com.example.ui.screens.logs.ActiveAppsScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.TweaksScreen
 import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.viewmodel.LogsViewModel
 import com.example.ui.viewmodel.MainViewModel
 
 class MainActivity : ComponentActivity() {
@@ -56,7 +59,10 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun MainApp(viewModel: MainViewModel = viewModel()) {
+fun MainApp(
+    viewModel: MainViewModel = viewModel(),
+    logsViewModel: LogsViewModel = viewModel()
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -99,7 +105,7 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
 
     // Trata o botão Voltar do sistema para retornar à tela inicial se estiver em outra tela
     BackHandler(enabled = uiState.currentScreen != AppScreen.HOME) {
-        viewModel.navigateTo(AppScreen.HOME)
+        viewModel.navigateTo(uiState.currentScreen.backTarget())
     }
 
     Scaffold(
@@ -192,6 +198,13 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
                             AppScreen.HISTORY -> HistoryScreen(
                                 historyList = uiState.historyList,
                                 onClearHistory = { viewModel.clearHistory() },
+                                onOpenLogs = { viewModel.navigateTo(it) },
+                                modifier = Modifier.fillMaxSize()
+                            )
+
+                            AppScreen.LOGS_APPS -> ActiveAppsScreen(
+                                viewModel = logsViewModel,
+                                onBack = { viewModel.navigateTo(AppScreen.HISTORY) },
                                 modifier = Modifier.fillMaxSize()
                             )
 

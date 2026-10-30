@@ -18,6 +18,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.ui.navigation.AppScreen
+import com.example.ui.navigation.isLogsSub
 
 @Composable
 fun BottomNavBar(
@@ -75,10 +76,10 @@ fun BottomNavBar(
         )
 
         NavigationBarItem(
-            selected = currentScreen == AppScreen.HISTORY,
+            selected = currentScreen == AppScreen.HISTORY || currentScreen.isLogsSub,
             onClick = { if (currentScreen != AppScreen.HISTORY) onNavigate(AppScreen.HISTORY) },
             icon = { Icon(Icons.Rounded.History, contentDescription = null) },
-            label = { Text("Histórico") },
+            label = { Text("Logs") },
             modifier = Modifier.testTag("nav_history"),
             colors = itemColors
         )

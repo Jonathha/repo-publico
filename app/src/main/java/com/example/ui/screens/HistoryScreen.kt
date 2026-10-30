@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -31,9 +32,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.database.TweakHistoryEntity
+import com.example.ui.components.QuickAccessCard
+import com.example.ui.navigation.AppScreen
 import com.example.ui.theme.CyanAccent
 import com.example.ui.theme.ErrorRed
 import com.example.ui.theme.SuccessGreen
@@ -45,84 +49,119 @@ import java.util.Locale
 fun HistoryScreen(
     historyList: List<TweakHistoryEntity>,
     onClearHistory: () -> Unit,
+    onOpenLogs: (AppScreen) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val dateFormat = remember { SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault()) }
 
-    Column(
+    LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Spacer(modifier = Modifier.height(20.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
+        item(key = "header") {
+            Column {
+                Spacer(modifier = Modifier.height(20.dp))
                 Text(
-                    text = "Histórico de Operações",
+                    text = "Logs",
                     style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
-                    text = "Registro local das otimizações e comandos executados.",
+                    text = "Monitoramento e registros do dispositivo.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "ACESSOS RÁPIDOS",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    ),
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+                QuickAccessCard(
+                    title = "Aplicativos ativos",
+                    subtitle = "Veja o que está em execução e encerre apps",
+                    icon = Icons.Rounded.Apps,
+                    accent = MaterialTheme.colorScheme.primary,
+                    onClick = { onOpenLogs(AppScreen.LOGS_APPS) },
+                    modifier = Modifier.testTag("logs_apps_button")
+                )
             }
+        }
 
-            if (historyList.isNotEmpty()) {
-                OutlinedButton(
-                    onClick = onClearHistory,
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = ButtonDefaults.TextButtonContentPadding
-                ) {
-                    Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Limpar", style = MaterialTheme.typography.labelSmall)
+        item(key = "ops_header") {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "HISTÓRICO DE OPERAÇÕES",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    )
+                    Text(
+                        text = "Registro local das otimizações e comandos executados.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                if (historyList.isNotEmpty()) {
+                    OutlinedButton(
+                        onClick = onClearHistory,
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = ButtonDefaults.TextButtonContentPadding
+                    ) {
+                        Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Limpar", style = MaterialTheme.typography.labelSmall)
+                    }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
         if (historyList.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Default.History,
-                        contentDescription = null,
-                        modifier = Modifier.size(48.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "Nenhuma operação registrada ainda.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+            item(key = "ops_empty") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.History,
+                            contentDescription = null,
+                            modifier = Modifier.size(48.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Nenhuma operação registrada ainda.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                items(historyList, key = { it.id }) { item ->
-                    HistoryItemCard(item = item, formattedDate = dateFormat.format(Date(item.timestamp)))
-                }
-                item {
-                    Spacer(modifier = Modifier.height(24.dp))
-                }
+            items(historyList, key = { it.id }) { item ->
+                HistoryItemCard(item = item, formattedDate = dateFormat.format(Date(item.timestamp)))
             }
+        }
+
+        item(key = "bottom_space") {
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }

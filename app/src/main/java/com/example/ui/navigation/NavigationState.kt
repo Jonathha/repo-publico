@@ -7,12 +7,13 @@ enum class AppScreen {
     HISTORY,
     SETTINGS,
     HELP,
-    LOGS_APPS
+    LOGS_APPS,
+    LOGS_PING
 }
 
 /** Telas internas da aba Logs (a aba HISTORY é o hub). */
 val AppScreen.isLogsSub: Boolean
-    get() = this == AppScreen.LOGS_APPS
+    get() = this == AppScreen.LOGS_APPS || this == AppScreen.LOGS_PING
 
 /** Destino do botão Voltar do sistema para cada tela. */
 fun AppScreen.backTarget(): AppScreen = if (isLogsSub) AppScreen.HISTORY else AppScreen.HOME

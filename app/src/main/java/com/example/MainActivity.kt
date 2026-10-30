@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.layout
 import kotlinx.coroutines.delay
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.components.BottomNavBar
 import com.example.ui.navigation.AppScreen
@@ -40,6 +41,7 @@ import com.example.ui.screens.HelpScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.logs.ActiveAppsScreen
+import com.example.ui.screens.logs.PingScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.TweaksScreen
 import com.example.ui.theme.MyApplicationTheme
@@ -82,6 +84,11 @@ fun MainApp(
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Coleta de ping só com o app em primeiro plano; cancela ao sair de STARTED.
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { logsViewModel.runPingSampler() }
     }
 
     val onOverlayToggle: (Boolean) -> Unit = { enable ->
@@ -203,6 +210,12 @@ fun MainApp(
                             )
 
                             AppScreen.LOGS_APPS -> ActiveAppsScreen(
+                                viewModel = logsViewModel,
+                                onBack = { viewModel.navigateTo(AppScreen.HISTORY) },
+                                modifier = Modifier.fillMaxSize()
+                            )
+
+                            AppScreen.LOGS_PING -> PingScreen(
                                 viewModel = logsViewModel,
                                 onBack = { viewModel.navigateTo(AppScreen.HISTORY) },
                                 modifier = Modifier.fillMaxSize()

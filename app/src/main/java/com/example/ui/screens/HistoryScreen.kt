@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.NetworkCheck
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -89,6 +90,15 @@ fun HistoryScreen(
                     accent = MaterialTheme.colorScheme.primary,
                     onClick = { onOpenLogs(AppScreen.LOGS_APPS) },
                     modifier = Modifier.testTag("logs_apps_button")
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                QuickAccessCard(
+                    title = "Histórico de ping",
+                    subtitle = "Latência, jitter e falhas de conexão",
+                    icon = Icons.Rounded.NetworkCheck,
+                    accent = MaterialTheme.colorScheme.secondary,
+                    onClick = { onOpenLogs(AppScreen.LOGS_PING) },
+                    modifier = Modifier.testTag("logs_ping_button")
                 )
             }
         }

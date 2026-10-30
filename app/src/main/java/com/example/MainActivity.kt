@@ -4,9 +4,6 @@ import android.os.Bundle
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -15,7 +12,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -30,6 +26,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
+import kotlinx.coroutines.delay
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.components.BottomNavBar
@@ -118,71 +116,87 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            val screen = uiState.currentScreen
-            key(screen) {
-                val fade = remember { Animatable(0f) }
-                LaunchedEffect(Unit) {
-                    fade.animateTo(1f, tween(durationMillis = 140, easing = LinearOutSlowInEasing))
+            val current = uiState.currentScreen
+            val mainTabs = listOf(AppScreen.HOME, AppScreen.FREE_FIRE, AppScreen.TWEAKS, AppScreen.HISTORY)
+
+            // Abas principais ficam vivas depois de compostas: trocar de aba só mostra/esconde, sem recompor do zero.
+            var composedTabs by remember { mutableStateOf(setOf(AppScreen.HOME)) }
+            LaunchedEffect(Unit) {
+                // Pré-compõe as demais abas em segundo plano, uma por vez, após o primeiro frame.
+                delay(400)
+                for (tab in mainTabs) {
+                    composedTabs = composedTabs + tab
+                    delay(250)
                 }
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer { alpha = fade.value }
-                ) {
-                    when (screen) {
-                        AppScreen.HOME -> HomeScreen(
-                            shizukuStatus = uiState.shizukuStatus,
-                            ramDiagnostic = uiState.ramDiagnostic,
-                            thermalDiagnostic = uiState.thermalDiagnostic,
-                            storageDiagnostic = uiState.storageDiagnostic,
-                            batteryPercent = uiState.batteryPercent,
-                            overlayEnabled = uiState.overlayEnabled,
-                            onOverlayToggle = onOverlayToggle,
-                            isOptimizing = uiState.isOptimizing,
-                            currentProgressText = uiState.currentProgressText,
-                            lastOptimizationSummary = uiState.lastOptimizationSummary,
-                            onSettingsClick = { viewModel.navigateTo(AppScreen.SETTINGS) },
-                            onHelpClick = { viewModel.navigateTo(AppScreen.HELP) },
-                            onOptimizeClick = { viewModel.optimizeNow() },
-                            onNavigate = { viewModel.navigateTo(it) },
-                            onRequestShizukuPermission = { viewModel.requestShizukuPermission() },
-                            modifier = Modifier.fillMaxSize()
-                        )
+            }
+            LaunchedEffect(current) {
+                if (current in mainTabs) composedTabs = composedTabs + current
+            }
 
-                        AppScreen.FREE_FIRE -> FreeFireScreen(
-                            uiState = uiState,
-                            onSelectPackage = { viewModel.selectFreeFirePackage(it) },
-                            onApplyTweak = { viewModel.toggleTweak(it) },
-                            onRestoreTweak = { viewModel.restoreTweak(it) },
-                            onLaunchGame = { viewModel.launchFreeFire() },
-                            modifier = Modifier.fillMaxSize()
-                        )
+            for (tab in AppScreen.entries) {
+                if (tab !in composedTabs && tab != current) continue
+                key(tab) {
+                    // Aba oculta é medida mas não posicionada: não desenha nem recebe toque.
+                    val hiddenModifier = if (tab == current) Modifier else Modifier.layout { measurable, constraints ->
+                        val placeable = measurable.measure(constraints)
+                        layout(placeable.width, placeable.height) {}
+                    }
+                    Box(modifier = Modifier.fillMaxSize().then(hiddenModifier)) {
+                        when (tab) {
+                            AppScreen.HOME -> HomeScreen(
+                                shizukuStatus = uiState.shizukuStatus,
+                                ramDiagnostic = uiState.ramDiagnostic,
+                                thermalDiagnostic = uiState.thermalDiagnostic,
+                                storageDiagnostic = uiState.storageDiagnostic,
+                                batteryPercent = uiState.batteryPercent,
+                                overlayEnabled = uiState.overlayEnabled,
+                                onOverlayToggle = onOverlayToggle,
+                                isOptimizing = uiState.isOptimizing,
+                                currentProgressText = uiState.currentProgressText,
+                                lastOptimizationSummary = uiState.lastOptimizationSummary,
+                                onSettingsClick = { viewModel.navigateTo(AppScreen.SETTINGS) },
+                                onHelpClick = { viewModel.navigateTo(AppScreen.HELP) },
+                                onOptimizeClick = { viewModel.optimizeNow() },
+                                onNavigate = { viewModel.navigateTo(it) },
+                                onRequestShizukuPermission = { viewModel.requestShizukuPermission() },
+                                modifier = Modifier.fillMaxSize()
+                            )
 
-                        AppScreen.TWEAKS -> TweaksScreen(
-                            uiState = uiState,
-                            onToggleTweak = { viewModel.toggleTweak(it) },
-                            onRestoreTweak = { viewModel.restoreTweak(it) },
-                            onRestoreAll = { viewModel.restoreAllTweaks() },
-                            modifier = Modifier.fillMaxSize()
-                        )
+                            AppScreen.FREE_FIRE -> FreeFireScreen(
+                                uiState = uiState,
+                                onSelectPackage = { viewModel.selectFreeFirePackage(it) },
+                                onApplyTweak = { viewModel.toggleTweak(it) },
+                                onRestoreTweak = { viewModel.restoreTweak(it) },
+                                onLaunchGame = { viewModel.launchFreeFire() },
+                                modifier = Modifier.fillMaxSize()
+                            )
 
-                        AppScreen.HISTORY -> HistoryScreen(
-                            historyList = uiState.historyList,
-                            onClearHistory = { viewModel.clearHistory() },
-                            modifier = Modifier.fillMaxSize()
-                        )
+                            AppScreen.TWEAKS -> TweaksScreen(
+                                uiState = uiState,
+                                onToggleTweak = { viewModel.toggleTweak(it) },
+                                onRestoreTweak = { viewModel.restoreTweak(it) },
+                                onRestoreAll = { viewModel.restoreAllTweaks() },
+                                modifier = Modifier.fillMaxSize()
+                            )
 
-                        AppScreen.SETTINGS -> SettingsScreen(
-                            uiState = uiState,
-                            onBackClick = { viewModel.navigateTo(AppScreen.HOME) },
-                            onRequestShizukuPermission = { viewModel.requestShizukuPermission() },
-                            modifier = Modifier.fillMaxSize()
-                        )
+                            AppScreen.HISTORY -> HistoryScreen(
+                                historyList = uiState.historyList,
+                                onClearHistory = { viewModel.clearHistory() },
+                                modifier = Modifier.fillMaxSize()
+                            )
 
-                        AppScreen.HELP -> HelpScreen(
-                            onBackClick = { viewModel.navigateTo(AppScreen.HOME) },
-                            modifier = Modifier.fillMaxSize()
-                        )
+                            AppScreen.SETTINGS -> SettingsScreen(
+                                uiState = uiState,
+                                onBackClick = { viewModel.navigateTo(AppScreen.HOME) },
+                                onRequestShizukuPermission = { viewModel.requestShizukuPermission() },
+                                modifier = Modifier.fillMaxSize()
+                            )
+
+                            AppScreen.HELP -> HelpScreen(
+                                onBackClick = { viewModel.navigateTo(AppScreen.HOME) },
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
                     }
                 }
             }

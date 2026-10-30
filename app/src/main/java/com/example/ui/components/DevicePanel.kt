@@ -7,20 +7,19 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Thermostat
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -31,7 +30,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.shizuku.ShizukuStatus
@@ -48,160 +49,126 @@ fun DevicePanel(
     thermalDiagnostic: ThermalDiagnostic?,
     modifier: Modifier = Modifier
 ) {
-    Card(
+    val (targetStatusColor, statusText) = when (shizukuStatus) {
+        ShizukuStatus.CONNECTED -> SuccessGreen to "Conectado"
+        ShizukuStatus.NO_PERMISSION -> FireAmber to "Sem permissão"
+        ShizukuStatus.DISCONNECTED -> ErrorRed to "Desconectado"
+        ShizukuStatus.UNAVAILABLE -> Color.Gray to "Indisponível"
+    }
+    val statusColor by animateColorAsState(targetStatusColor, tween(200), label = "shizukuBadge")
+
+    val thermalSevere = thermalDiagnostic?.isSevereOrCritical == true
+    val tempText = if (thermalDiagnostic?.batteryTempCelsius != null) {
+        String.format(java.util.Locale.US, "%.1f°C", thermalDiagnostic.batteryTempCelsius)
+    } else {
+        thermalDiagnostic?.thermalStatusText ?: "--"
+    }
+    val thermalSubtitle = thermalDiagnostic?.thermalStatusText ?: "Sensor ativo"
+
+    // Dois tiles de mesma altura: o texto de um nunca desalinha o outro.
+    Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            .padding(horizontal = 20.dp)
+            .height(IntrinsicSize.Max),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(18.dp)
-        ) {
-            // Shizuku Header Status Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Security,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = "SHIZUKU CORE",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        )
-                        Text(
-                            text = "Acesso Privilegiado ADB",
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        )
-                    }
-                }
-
-                val (targetBadgeColor, statusText) = when (shizukuStatus) {
-                    ShizukuStatus.CONNECTED -> SuccessGreen to "Conectado"
-                    ShizukuStatus.NO_PERMISSION -> FireAmber to "Sem permissão"
-                    ShizukuStatus.DISCONNECTED -> ErrorRed to "Desconectado"
-                    ShizukuStatus.UNAVAILABLE -> Color.Gray to "Indisponível"
-                }
-
-                val badgeColor by animateColorAsState(targetBadgeColor, tween(200), label = "shizukuBadge")
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = badgeColor.copy(alpha = 0.12f),
-                    border = BorderStroke(1.dp, badgeColor.copy(alpha = 0.25f))
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(7.dp)
-                                .clip(CircleShape)
-                                .background(badgeColor)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = statusText,
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = badgeColor
-                            )
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Diagnóstico térmico (RAM fica nos anéis da visão geral)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                // Thermal Tile
-                Surface(
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "TÉRMICO",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            )
-                            Icon(
-                                imageVector = Icons.Rounded.Thermostat,
-                                contentDescription = null,
-                                tint = FireAmber,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        val tempText = if (thermalDiagnostic?.batteryTempCelsius != null) {
-                            String.format(java.util.Locale.US, "%.1f°C", thermalDiagnostic.batteryTempCelsius)
-                        } else {
-                            thermalDiagnostic?.thermalStatusText ?: "--"
-                        }
-
-                        Text(
-                            text = tempText,
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.ExtraBold,
-                                color = if (thermalDiagnostic?.isSevereOrCritical == true) ErrorRed else MaterialTheme.colorScheme.onSurface
-                            )
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        val statusSubtitle = thermalDiagnostic?.thermalStatusText ?: "Sensor ativo"
-                        Text(
-                            text = statusSubtitle,
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontSize = 10.sp,
-                                color = if (thermalDiagnostic?.isSevereOrCritical == true) ErrorRed else SuccessGreen
-                            )
-                        )
-                    }
-                }
-            }
-        }
+        StatusTile(
+            label = "SHIZUKU",
+            icon = Icons.Rounded.Security,
+            iconTint = statusColor,
+            value = statusText,
+            valueColor = statusColor,
+            subtitle = "Acesso privilegiado ADB",
+            subtitleColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+        )
+        StatusTile(
+            label = "TÉRMICO",
+            icon = Icons.Rounded.Thermostat,
+            iconTint = if (thermalSevere) ErrorRed else FireAmber,
+            value = tempText,
+            valueColor = if (thermalSevere) ErrorRed else MaterialTheme.colorScheme.onSurface,
+            subtitle = thermalSubtitle,
+            subtitleColor = if (thermalSevere) ErrorRed else SuccessGreen,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+        )
     }
 }
 
+@Composable
+private fun StatusTile(
+    label: String,
+    icon: ImageVector,
+    iconTint: Color,
+    value: String,
+    valueColor: Color,
+    subtitle: String,
+    subtitleColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(iconTint.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = iconTint,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontWeight = FontWeight.ExtraBold,
+                    color = valueColor
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Spacer(modifier = Modifier.height(2.dp))
+
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = 10.sp,
+                    color = subtitleColor
+                ),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}

@@ -7,6 +7,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -32,6 +33,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.system.RamDiagnostic
@@ -55,41 +58,49 @@ fun OverviewRings(
         String.format(Locale.US, "%.1f / %.1f GB", it.usedBytes / gb, it.totalBytes / gb)
     }
 
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-    ) {
-        Row(
+    // O diâmetro dos anéis acompanha a largura disponível (margens 2×20dp + padding 2×12dp).
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val ringSize = ((maxWidth - 64.dp) / 3 - 8.dp).coerceIn(64.dp, 84.dp)
+
+        Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 18.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly
+                .padding(horizontal = 20.dp),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
-            MetricRing(
-                label = "RAM",
-                percent = ramDiagnostic?.usedPercentage,
-                detail = ramDetail,
-                color = if (ramDiagnostic?.isLowMemory == true) ErrorRed else CyanAccent,
-                modifier = Modifier.weight(1f)
-            )
-            MetricRing(
-                label = "Armazenamento",
-                percent = storageDiagnostic?.usedPercentage,
-                detail = storageDiagnostic?.summary,
-                color = FireAmber,
-                modifier = Modifier.weight(1f)
-            )
-            MetricRing(
-                label = "Bateria",
-                percent = batteryPercent,
-                detail = null,
-                color = if (batteryPercent != null && batteryPercent <= 15) ErrorRed else SuccessGreen,
-                modifier = Modifier.weight(1f)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 18.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                MetricRing(
+                    label = "RAM",
+                    percent = ramDiagnostic?.usedPercentage,
+                    detail = ramDetail,
+                    color = if (ramDiagnostic?.isLowMemory == true) ErrorRed else CyanAccent,
+                    ringSize = ringSize,
+                    modifier = Modifier.weight(1f)
+                )
+                MetricRing(
+                    label = "Armazenamento",
+                    percent = storageDiagnostic?.usedPercentage,
+                    detail = storageDiagnostic?.summary,
+                    color = FireAmber,
+                    ringSize = ringSize,
+                    modifier = Modifier.weight(1f)
+                )
+                MetricRing(
+                    label = "Bateria",
+                    percent = batteryPercent,
+                    detail = null,
+                    color = if (batteryPercent != null && batteryPercent <= 15) ErrorRed else SuccessGreen,
+                    ringSize = ringSize,
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
     }
 }
@@ -100,6 +111,7 @@ private fun MetricRing(
     percent: Int?,
     detail: String?,
     color: Color,
+    ringSize: Dp,
     modifier: Modifier = Modifier
 ) {
     val track = MaterialTheme.colorScheme.surfaceVariant
@@ -115,10 +127,10 @@ private fun MetricRing(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Box(modifier = Modifier.size(78.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.size(ringSize), contentAlignment = Alignment.Center) {
             // O progresso é lido apenas na fase de desenho: o anel anima sem recompor.
             Canvas(modifier = Modifier.fillMaxSize()) {
-                val stroke = 8.dp.toPx()
+                val stroke = size.minDimension * 0.1f
                 val inset = stroke / 2f
                 val arcSize = Size(size.width - stroke, size.height - stroke)
                 drawArc(
@@ -154,7 +166,8 @@ private fun MetricRing(
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
-            maxLines = 1
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
         if (detail != null) {
             Text(
@@ -162,7 +175,8 @@ private fun MetricRing(
                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
-                maxLines = 1
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }

@@ -230,7 +230,6 @@ fun MainApp(
                                 onSettingsClick = { viewModel.navigateTo(AppScreen.SETTINGS) },
                                 onHelpClick = { viewModel.navigateTo(AppScreen.HELP) },
                                 onOptimizeClick = { viewModel.optimizeNow() },
-                                onNavigate = { viewModel.navigateTo(it) },
                                 onRequestShizukuPermission = { viewModel.requestShizukuPermission() },
                                 modifier = Modifier.fillMaxSize()
                             )

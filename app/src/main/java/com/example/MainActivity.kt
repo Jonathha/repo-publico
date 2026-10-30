@@ -60,13 +60,15 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
             }
         }
     ) { innerPadding ->
-        val contentModifier = Modifier
-            .fillMaxSize()
-            .padding(innerPadding)
-
         AnimatedContent(
             targetState = uiState.currentScreen,
-            transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            transitionSpec = {
+                (fadeIn(animationSpec = tween(180, easing = androidx.compose.animation.core.FastOutSlowInEasing)) togetherWith
+                    fadeOut(animationSpec = tween(90, easing = androidx.compose.animation.core.FastOutLinearInEasing))).using(null)
+            },
             label = "screenTransition"
         ) { screen ->
             when (screen) {
@@ -81,7 +83,7 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
                     onOptimizeClick = { viewModel.optimizeNow() },
                     onNavigate = { viewModel.navigateTo(it) },
                     onRequestShizukuPermission = { viewModel.requestShizukuPermission() },
-                    modifier = contentModifier
+                    modifier = Modifier.fillMaxSize()
                 )
 
                 AppScreen.FREE_FIRE -> FreeFireScreen(
@@ -90,7 +92,7 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
                     onApplyTweak = { viewModel.toggleTweak(it) },
                     onRestoreTweak = { viewModel.restoreTweak(it) },
                     onLaunchGame = { viewModel.launchFreeFire() },
-                    modifier = contentModifier
+                    modifier = Modifier.fillMaxSize()
                 )
 
                 AppScreen.TWEAKS -> TweaksScreen(
@@ -98,20 +100,20 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
                     onToggleTweak = { viewModel.toggleTweak(it) },
                     onRestoreTweak = { viewModel.restoreTweak(it) },
                     onRestoreAll = { viewModel.restoreAllTweaks() },
-                    modifier = contentModifier
+                    modifier = Modifier.fillMaxSize()
                 )
 
                 AppScreen.HISTORY -> HistoryScreen(
                     historyList = uiState.historyList,
                     onClearHistory = { viewModel.clearHistory() },
-                    modifier = contentModifier
+                    modifier = Modifier.fillMaxSize()
                 )
 
                 AppScreen.SETTINGS -> SettingsScreen(
                     uiState = uiState,
                     onBackClick = { viewModel.navigateTo(AppScreen.HOME) },
                     onRequestShizukuPermission = { viewModel.requestShizukuPermission() },
-                    modifier = contentModifier
+                    modifier = Modifier.fillMaxSize()
                 )
             }
         }

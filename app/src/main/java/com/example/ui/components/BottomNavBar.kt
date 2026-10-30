@@ -49,7 +49,7 @@ fun BottomNavBar(
     ) {
         NavigationBarItem(
             selected = currentScreen == AppScreen.HOME,
-            onClick = { onNavigate(AppScreen.HOME) },
+            onClick = { if (currentScreen != AppScreen.HOME) onNavigate(AppScreen.HOME) },
             icon = { Icon(Icons.Rounded.Home, contentDescription = null) },
             label = { Text("Início") },
             modifier = Modifier.testTag("nav_home"),
@@ -58,7 +58,7 @@ fun BottomNavBar(
 
         NavigationBarItem(
             selected = currentScreen == AppScreen.FREE_FIRE,
-            onClick = { onNavigate(AppScreen.FREE_FIRE) },
+            onClick = { if (currentScreen != AppScreen.FREE_FIRE) onNavigate(AppScreen.FREE_FIRE) },
             icon = { Icon(Icons.Rounded.SportsEsports, contentDescription = null) },
             label = { Text("Free Fire") },
             modifier = Modifier.testTag("nav_freefire"),
@@ -67,7 +67,7 @@ fun BottomNavBar(
 
         NavigationBarItem(
             selected = currentScreen == AppScreen.TWEAKS,
-            onClick = { onNavigate(AppScreen.TWEAKS) },
+            onClick = { if (currentScreen != AppScreen.TWEAKS) onNavigate(AppScreen.TWEAKS) },
             icon = { Icon(Icons.Rounded.Tune, contentDescription = null) },
             label = { Text("Ajustes") },
             modifier = Modifier.testTag("nav_tweaks"),
@@ -76,7 +76,7 @@ fun BottomNavBar(
 
         NavigationBarItem(
             selected = currentScreen == AppScreen.HISTORY,
-            onClick = { onNavigate(AppScreen.HISTORY) },
+            onClick = { if (currentScreen != AppScreen.HISTORY) onNavigate(AppScreen.HISTORY) },
             icon = { Icon(Icons.Rounded.History, contentDescription = null) },
             label = { Text("Histórico") },
             modifier = Modifier.testTag("nav_history"),

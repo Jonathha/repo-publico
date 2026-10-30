@@ -18,11 +18,15 @@ import com.example.data.tweaks.TweakExecutor
 import com.example.data.tweaks.TweakItem
 import com.example.ui.navigation.AppScreen
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 data class MainUiState(
     val currentScreen: AppScreen = AppScreen.HOME,
@@ -37,7 +41,8 @@ data class MainUiState(
     val currentProgressText: String? = null,
     val lastOptimizationSummary: String? = null,
     val historyList: List<TweakHistoryEntity> = emptyList(),
-    val appliedTweakIds: Set<String> = emptySet()
+    val appliedTweakIds: Set<String> = emptySet(),
+    val busyTweakIds: Set<String> = emptySet()
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -46,6 +51,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getInstance(application.applicationContext)
     private val tweakDao = database.tweakDao()
     private val tweakExecutor = TweakExecutor(shizukuManager, tweakDao)
+
+    // Serializa a execução de comandos Shizuku: evita vários processos shell em paralelo.
+    private val tweakMutex = Mutex()
+    @Volatile private var refreshJob: Job? = null
 
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
@@ -108,18 +117,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun refreshTweaksList() {
-        viewModelScope.launch(Dispatchers.IO) {
-            val isShizukuActive = _uiState.value.shizukuStatus == ShizukuStatus.CONNECTED
-            val targetPkg = _uiState.value.selectedPackage
-            val available = TweakCatalog.getAvailableTweaks(targetPkg, isShizukuActive)
-            val backups = tweakDao.getAllBackups().map { it.tweakKey }.toSet()
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch { reloadTweaks() }
+    }
 
-            _uiState.update {
-                it.copy(
-                    tweaks = available,
-                    appliedTweakIds = backups
-                )
-            }
+    private suspend fun reloadTweaks() = withContext(Dispatchers.IO) {
+        val isShizukuActive = _uiState.value.shizukuStatus == ShizukuStatus.CONNECTED
+        val targetPkg = _uiState.value.selectedPackage
+        val available = TweakCatalog.getAvailableTweaks(targetPkg, isShizukuActive)
+        val backups = tweakDao.getAllBackups().map { it.tweakKey }.toSet()
+
+        _uiState.update {
+            it.copy(
+                tweaks = available,
+                appliedTweakIds = backups
+            )
         }
     }
 
@@ -154,7 +166,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             for (tweak in supportedTweaks) {
                 _uiState.update { it.copy(currentProgressText = "Aplicando: ${tweak.title}…") }
-                val result = tweakExecutor.applyTweak(tweak.id, targetPkg)
+                val result = tweakMutex.withLock { tweakExecutor.applyTweak(tweak.id, targetPkg) }
                 if (result.isSuccess) {
                     successes++
                 } else {
@@ -184,36 +196,72 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun toggleTweak(tweakId: String) {
-        viewModelScope.launch {
-            val isApplied = _uiState.value.appliedTweakIds.contains(tweakId)
-            val targetPkg = _uiState.value.selectedPackage
+    /** Marca o ajuste como ocupado; retorna false se já houver uma operação em andamento para ele. */
+    private fun markBusy(ids: Collection<String>): Boolean {
+        var added = false
+        _uiState.update { state ->
+            added = ids.none { it in state.busyTweakIds }
+            if (added) state.copy(busyTweakIds = state.busyTweakIds + ids) else state
+        }
+        return added
+    }
 
-            if (isApplied) {
-                tweakExecutor.restoreTweak(tweakId, targetPkg)
-            } else {
-                tweakExecutor.applyTweak(tweakId, targetPkg)
+    private fun clearBusy(ids: Collection<String>) {
+        _uiState.update { it.copy(busyTweakIds = it.busyTweakIds - ids.toSet()) }
+    }
+
+    fun toggleTweak(tweakId: String) {
+        if (!markBusy(listOf(tweakId))) return
+        viewModelScope.launch {
+            try {
+                tweakMutex.withLock {
+                    val isApplied = _uiState.value.appliedTweakIds.contains(tweakId)
+                    val targetPkg = _uiState.value.selectedPackage
+
+                    if (isApplied) {
+                        tweakExecutor.restoreTweak(tweakId, targetPkg)
+                    } else {
+                        tweakExecutor.applyTweak(tweakId, targetPkg)
+                    }
+                }
+                reloadTweaks()
+            } finally {
+                clearBusy(listOf(tweakId))
             }
-            refreshTweaksList()
         }
     }
 
     fun restoreTweak(tweakId: String) {
+        if (!markBusy(listOf(tweakId))) return
         viewModelScope.launch {
-            val targetPkg = _uiState.value.selectedPackage
-            tweakExecutor.restoreTweak(tweakId, targetPkg)
-            refreshTweaksList()
+            try {
+                tweakMutex.withLock {
+                    val targetPkg = _uiState.value.selectedPackage
+                    tweakExecutor.restoreTweak(tweakId, targetPkg)
+                }
+                reloadTweaks()
+            } finally {
+                clearBusy(listOf(tweakId))
+            }
         }
     }
 
     fun restoreAllTweaks() {
+        val state = _uiState.value
+        val ids = (state.appliedTweakIds - state.busyTweakIds).toList()
+        if (ids.isEmpty() || !markBusy(ids)) return
         viewModelScope.launch {
-            val targetPkg = _uiState.value.selectedPackage
-            val applied = _uiState.value.appliedTweakIds.toList()
-            for (id in applied) {
-                tweakExecutor.restoreTweak(id, targetPkg)
+            try {
+                tweakMutex.withLock {
+                    val targetPkg = _uiState.value.selectedPackage
+                    for (id in ids) {
+                        tweakExecutor.restoreTweak(id, targetPkg)
+                    }
+                }
+                reloadTweaks()
+            } finally {
+                clearBusy(ids)
             }
-            refreshTweaksList()
         }
     }
 

@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Restore
@@ -42,7 +41,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.tweaks.TweakCategory
@@ -147,6 +145,7 @@ fun TweaksScreen(
                 TweakCardItem(
                     tweak = tweak,
                     isApplied = uiState.appliedTweakIds.contains(tweak.id),
+                    isBusy = uiState.busyTweakIds.contains(tweak.id),
                     onToggle = { onToggleTweak(tweak.id) },
                     onRestore = { onRestoreTweak(tweak.id) }
                 )
@@ -228,6 +227,7 @@ private fun categoryIcon(category: TweakCategory): ImageVector = when (category)
 private fun TweakCardItem(
     tweak: TweakItem,
     isApplied: Boolean,
+    isBusy: Boolean,
     onToggle: () -> Unit,
     onRestore: () -> Unit
 ) {
@@ -275,6 +275,7 @@ private fun TweakCardItem(
                     Spacer(modifier = Modifier.width(8.dp))
                     Switch(
                         checked = isApplied,
+                        enabled = !isBusy,
                         onCheckedChange = { onToggle() },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
@@ -294,36 +295,6 @@ private fun TweakCardItem(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Comando técnico / Parâmetro Shizuku
-            Surface(
-                shape = RoundedCornerShape(6.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Code,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.size(13.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = tweak.technicalDetails,
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Medium
-                        ),
-                        color = MaterialTheme.colorScheme.secondary
-                    )
-                }
-            }
 
             if (!tweak.isSupported && tweak.unsupportedReason != null) {
                 Surface(

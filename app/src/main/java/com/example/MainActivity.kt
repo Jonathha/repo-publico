@@ -17,6 +17,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.components.BottomNavBar
 import com.example.ui.navigation.AppScreen
 import com.example.ui.screens.FreeFireScreen
+import com.example.ui.screens.HelpScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.SettingsScreen
@@ -48,7 +49,7 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
-            if (uiState.currentScreen != AppScreen.SETTINGS) {
+            if (uiState.currentScreen != AppScreen.SETTINGS && uiState.currentScreen != AppScreen.HELP) {
                 BottomNavBar(
                     currentScreen = uiState.currentScreen,
                     onNavigate = { viewModel.navigateTo(it) }
@@ -71,6 +72,7 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
                     currentProgressText = uiState.currentProgressText,
                     lastOptimizationSummary = uiState.lastOptimizationSummary,
                     onSettingsClick = { viewModel.navigateTo(AppScreen.SETTINGS) },
+                    onHelpClick = { viewModel.navigateTo(AppScreen.HELP) },
                     onOptimizeClick = { viewModel.optimizeNow() },
                     onNavigate = { viewModel.navigateTo(it) },
                     onRequestShizukuPermission = { viewModel.requestShizukuPermission() },
@@ -104,6 +106,11 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
                     uiState = uiState,
                     onBackClick = { viewModel.navigateTo(AppScreen.HOME) },
                     onRequestShizukuPermission = { viewModel.requestShizukuPermission() },
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                AppScreen.HELP -> HelpScreen(
+                    onBackClick = { viewModel.navigateTo(AppScreen.HOME) },
                     modifier = Modifier.fillMaxSize()
                 )
             }

@@ -35,6 +35,7 @@ import com.example.ui.theme.FireOrange
 fun HeaderBar(
     title: String,
     onSettingsClick: () -> Unit,
+    onHelpClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -72,20 +73,19 @@ fun HeaderBar(
             )
         }
 
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-        ) {
-            IconButton(
-                onClick = onSettingsClick,
-                modifier = Modifier
-                    .size(44.dp)
-                    .testTag("settings_button")
-            ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            HeaderButton(onClick = onHelpClick, tag = "help_button") {
+                Text(
+                    text = "?",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            HeaderButton(onClick = onSettingsClick, tag = "settings_button") {
                 Icon(
                     imageVector = Icons.Rounded.Settings,
-                    contentDescription = "Configurações do aplicativo",
+                    contentDescription = "Configurações",
                     tint = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(20.dp)
                 )
@@ -94,3 +94,25 @@ fun HeaderBar(
     }
 }
 
+
+@Composable
+private fun HeaderButton(
+    onClick: () -> Unit,
+    tag: String,
+    content: @Composable () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        IconButton(
+            onClick = onClick,
+            modifier = Modifier
+                .size(44.dp)
+                .testTag(tag)
+        ) {
+            content()
+        }
+    }
+}

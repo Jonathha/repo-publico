@@ -65,6 +65,7 @@ fun HomeScreen(
     currentProgressText: String?,
     lastOptimizationSummary: String?,
     onSettingsClick: () -> Unit,
+    onHelpClick: () -> Unit,
     onOptimizeClick: () -> Unit,
     onNavigate: (AppScreen) -> Unit,
     onRequestShizukuPermission: () -> Unit,
@@ -80,7 +81,8 @@ fun HomeScreen(
         // Cabeçalho (Área 1: Botão de configurações)
         HeaderBar(
             title = "FF Game Optimizer",
-            onSettingsClick = onSettingsClick
+            onSettingsClick = onSettingsClick,
+            onHelpClick = onHelpClick
         )
 
         // Banner informativo se Shizuku precisar de permissão

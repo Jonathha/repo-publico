@@ -5,5 +5,6 @@ enum class AppScreen {
     FREE_FIRE,
     TWEAKS,
     HISTORY,
-    SETTINGS
+    SETTINGS,
+    HELP
 }

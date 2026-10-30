@@ -117,8 +117,13 @@ class TweakExecutor(
                 actionName = "Limpeza de Memória & Processos"
                 val killRes = shizukuManager.execute("am kill-all")
                 val trimRes = shizukuManager.execute("pm trim-caches 200M")
-                val msg = "Processos inativos liberados e cache aparado."
-                logAndReturn(tweakId, actionName, "Sistema", true, msg, timestamp)
+                val success = killRes.isSuccess || trimRes.isSuccess
+                val msg = if (success) {
+                    "Processos inativos liberados e cache aparado."
+                } else {
+                    "Falha: ${trimRes.stderr.ifBlank { killRes.stderr }.ifBlank { "comandos recusados pelo sistema" }}"
+                }
+                logAndReturn(tweakId, actionName, "Sistema", success, msg, timestamp)
             }
 
             TweakCatalog.ID_LOGCAT_BUFFER -> {

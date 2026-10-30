@@ -299,6 +299,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Aplica o ajuste sem alternar: usado por botões que só aplicam (ex.: Compilar/Recompilar). */
+    fun applyTweak(tweakId: String) {
+        if (!markBusy(listOf(tweakId))) return
+        viewModelScope.launch {
+            try {
+                tweakMutex.withLock {
+                    tweakExecutor.applyTweak(tweakId, _uiState.value.selectedPackage)
+                }
+                reloadTweaks()
+            } finally {
+                clearBusy(listOf(tweakId))
+            }
+        }
+    }
+
     fun restoreTweak(tweakId: String) {
         if (!markBusy(listOf(tweakId))) return
         viewModelScope.launch {

@@ -237,7 +237,7 @@ fun MainApp(
                             AppScreen.FREE_FIRE -> FreeFireScreen(
                                 uiState = tabState,
                                 onSelectPackage = { viewModel.selectFreeFirePackage(it) },
-                                onApplyTweak = { viewModel.toggleTweak(it) },
+                                onApplyTweak = { viewModel.applyTweak(it) },
                                 onRestoreTweak = { viewModel.restoreTweak(it) },
                                 onLaunchGame = { viewModel.launchFreeFire() },
                                 modifier = Modifier.fillMaxSize()

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.HelpOutline
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -75,10 +76,11 @@ fun HeaderBar(
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             HeaderButton(onClick = onHelpClick, tag = "help_button") {
-                Text(
-                    text = "?",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
-                    color = MaterialTheme.colorScheme.onSurface
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.HelpOutline,
+                    contentDescription = "Ajuda",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp)
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))

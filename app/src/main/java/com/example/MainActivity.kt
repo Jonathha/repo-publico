@@ -6,6 +6,8 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -117,6 +119,9 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
                 .padding(innerPadding)
         ) {
             val current = uiState.currentScreen
+            val currentState = rememberUpdatedState(current)
+            // Estado sem currentScreen (igualdade estrutural): trocar de aba não recompõe as telas que recebem o uiState.
+            val tabState by remember { derivedStateOf { uiState.copy(currentScreen = AppScreen.HOME) } }
             val mainTabs = listOf(AppScreen.HOME, AppScreen.FREE_FIRE, AppScreen.TWEAKS, AppScreen.HISTORY)
 
             // Abas principais ficam vivas depois de compostas: trocar de aba só mostra/esconde, sem recompor do zero.
@@ -136,12 +141,17 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
             for (tab in AppScreen.entries) {
                 if (tab !in composedTabs && tab != current) continue
                 key(tab) {
-                    // Aba oculta é medida mas não posicionada: não desenha nem recebe toque.
-                    val hiddenModifier = if (tab == current) Modifier else Modifier.layout { measurable, constraints ->
-                        val placeable = measurable.measure(constraints)
-                        layout(placeable.width, placeable.height) {}
+                    // Aba oculta é medida mas só é posicionada quando atual: não desenha nem recebe toque.
+                    // A troca de aba só invalida o posicionamento, sem remedir nem recompor.
+                    val visibilityModifier = remember(tab) {
+                        Modifier.layout { measurable, constraints ->
+                            val placeable = measurable.measure(constraints)
+                            layout(placeable.width, placeable.height) {
+                                if (currentState.value == tab) placeable.place(0, 0)
+                            }
+                        }
                     }
-                    Box(modifier = Modifier.fillMaxSize().then(hiddenModifier)) {
+                    Box(modifier = Modifier.fillMaxSize().then(visibilityModifier)) {
                         when (tab) {
                             AppScreen.HOME -> HomeScreen(
                                 shizukuStatus = uiState.shizukuStatus,
@@ -163,7 +173,7 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
                             )
 
                             AppScreen.FREE_FIRE -> FreeFireScreen(
-                                uiState = uiState,
+                                uiState = tabState,
                                 onSelectPackage = { viewModel.selectFreeFirePackage(it) },
                                 onApplyTweak = { viewModel.toggleTweak(it) },
                                 onRestoreTweak = { viewModel.restoreTweak(it) },
@@ -172,7 +182,7 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
                             )
 
                             AppScreen.TWEAKS -> TweaksScreen(
-                                uiState = uiState,
+                                uiState = tabState,
                                 onToggleTweak = { viewModel.toggleTweak(it) },
                                 onRestoreTweak = { viewModel.restoreTweak(it) },
                                 onRestoreAll = { viewModel.restoreAllTweaks() },
@@ -186,7 +196,7 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
                             )
 
                             AppScreen.SETTINGS -> SettingsScreen(
-                                uiState = uiState,
+                                uiState = tabState,
                                 onBackClick = { viewModel.navigateTo(AppScreen.HOME) },
                                 onRequestShizukuPermission = { viewModel.requestShizukuPermission() },
                                 modifier = Modifier.fillMaxSize()

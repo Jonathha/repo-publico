@@ -1,7 +1,6 @@
 package com.example.ui.components
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -18,13 +17,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Thermostat
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -40,7 +37,6 @@ import androidx.compose.ui.unit.sp
 import com.example.data.shizuku.ShizukuStatus
 import com.example.data.system.RamDiagnostic
 import com.example.data.system.ThermalDiagnostic
-import com.example.ui.theme.CyanAccent
 import com.example.ui.theme.ErrorRed
 import com.example.ui.theme.FireAmber
 import com.example.ui.theme.SuccessGreen
@@ -143,89 +139,11 @@ fun DevicePanel(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Diagnostic Tiles (RAM & Thermals - Informational metrics)
+            // Diagnóstico térmico (RAM fica nos anéis da visão geral)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // RAM Tile
-                Surface(
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "RAM",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            )
-                            Icon(
-                                imageVector = Icons.Rounded.Memory,
-                                contentDescription = null,
-                                tint = CyanAccent,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        val percentText = if (ramDiagnostic != null) "${ramDiagnostic.usedPercentage}%" else "--"
-                        Text(
-                            text = percentText,
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.ExtraBold,
-                                color = if (ramDiagnostic?.isLowMemory == true) ErrorRed else MaterialTheme.colorScheme.onSurface
-                            )
-                        )
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        if (ramDiagnostic != null) {
-                            val ramProgress by animateFloatAsState(
-                                targetValue = ramDiagnostic.usedPercentage / 100f,
-                                animationSpec = tween(300),
-                                label = "ramProgress"
-                            )
-                            LinearProgressIndicator(
-                                progress = { ramProgress },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(4.dp)
-                                    .clip(RoundedCornerShape(2.dp)),
-                                color = if (ramDiagnostic.isLowMemory) ErrorRed else CyanAccent,
-                                trackColor = MaterialTheme.colorScheme.surface
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            val usedGb = ramDiagnostic.usedBytes.toDouble() / (1024 * 1024 * 1024)
-                            val totalGb = ramDiagnostic.totalBytes.toDouble() / (1024 * 1024 * 1024)
-                            Text(
-                                text = String.format(java.util.Locale.US, "%.1f / %.1f GB", usedGb, totalGb),
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontSize = 10.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            )
-                        } else {
-                            Text(
-                                text = "Não disponível",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontSize = 10.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            )
-                        }
-                    }
-                }
-
                 // Thermal Tile
                 Surface(
                     modifier = Modifier.weight(1f),

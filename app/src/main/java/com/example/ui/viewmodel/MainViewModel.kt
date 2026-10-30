@@ -12,10 +12,13 @@ import com.example.data.shizuku.ShizukuStatus
 import com.example.data.system.DeviceDiagnostics
 import com.example.data.system.DeviceSpec
 import com.example.data.system.RamDiagnostic
+import com.example.data.system.StorageDiagnostic
 import com.example.data.system.ThermalDiagnostic
 import com.example.data.tweaks.TweakCatalog
 import com.example.data.tweaks.TweakExecutor
 import com.example.data.tweaks.TweakItem
+import com.example.overlay.GameOverlayService
+import com.example.overlay.OverlayPrefs
 import com.example.ui.navigation.AppScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -42,7 +45,10 @@ data class MainUiState(
     val lastOptimizationSummary: String? = null,
     val historyList: List<TweakHistoryEntity> = emptyList(),
     val appliedTweakIds: Set<String> = emptySet(),
-    val busyTweakIds: Set<String> = emptySet()
+    val busyTweakIds: Set<String> = emptySet(),
+    val storageDiagnostic: StorageDiagnostic? = null,
+    val batteryPercent: Int? = null,
+    val overlayEnabled: Boolean = false
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -56,7 +62,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val tweakMutex = Mutex()
     @Volatile private var refreshJob: Job? = null
 
-    private val _uiState = MutableStateFlow(MainUiState())
+    private val _uiState = MutableStateFlow(
+        MainUiState(overlayEnabled = OverlayPrefs.isEnabled(application.applicationContext))
+    )
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     init {
@@ -82,6 +90,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(currentScreen = screen) }
     }
 
+    /** Ativa/desativa o painel flutuante. A permissão de sobreposição é tratada na UI. */
+    fun setOverlayEnabled(enabled: Boolean) {
+        val context = getApplication<Application>().applicationContext
+        OverlayPrefs.setEnabled(context, enabled)
+        _uiState.update { it.copy(overlayEnabled = enabled) }
+        if (enabled) GameOverlayService.start(context) else GameOverlayService.stop(context)
+    }
+
+    /** Reconcilia o estado salvo (ex.: painel fechado pela notificação ou permissão revogada). */
+    fun syncOverlayState() {
+        val context = getApplication<Application>().applicationContext
+        var enabled = OverlayPrefs.isEnabled(context)
+        if (enabled && !android.provider.Settings.canDrawOverlays(context)) {
+            OverlayPrefs.setEnabled(context, false)
+            enabled = false
+        }
+        if (_uiState.value.overlayEnabled != enabled) {
+            _uiState.update { it.copy(overlayEnabled = enabled) }
+        }
+    }
+
     fun requestShizukuPermission() {
         shizukuManager.requestPermission()
     }
@@ -95,9 +124,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val packages = FreeFireDetector.detectInstalledPackages(context)
             val primaryPkg = packages.firstOrNull { it.isInstalled }?.packageName
             val shizuku = shizukuManager.queryCurrentStatus()
+            val storage = DeviceDiagnostics.readStorage()
+            val battery = DeviceDiagnostics.readBatteryPercent(context)
 
             _uiState.update {
                 it.copy(
+                    storageDiagnostic = storage,
+                    batteryPercent = battery,
                     ramDiagnostic = ram,
                     thermalDiagnostic = thermals,
                     deviceSpec = spec,
@@ -190,7 +223,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     currentProgressText = null,
                     lastOptimizationSummary = summary,
                     ramDiagnostic = ram,
-                    thermalDiagnostic = thermals
+                    thermalDiagnostic = thermals,
+                    batteryPercent = DeviceDiagnostics.readBatteryPercent(getApplication()),
+                    storageDiagnostic = DeviceDiagnostics.readStorage()
                 )
             }
         }
@@ -276,6 +311,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val targetPkg = _uiState.value.selectedPackage
             ?: _uiState.value.freeFirePackages.firstOrNull { it.isInstalled }?.packageName
             ?: return false
+        if (_uiState.value.overlayEnabled && android.provider.Settings.canDrawOverlays(context)) {
+            GameOverlayService.start(context)
+        }
         return FreeFireDetector.launchGame(context, targetPkg)
     }
 

@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Environment
+import android.os.StatFs
 import android.os.PowerManager
 import java.util.Locale
 
@@ -16,6 +18,11 @@ data class RamDiagnostic(
     val usedPercentage: Int,
     val isLowMemory: Boolean,
     val formattedSummary: String
+)
+
+data class StorageDiagnostic(
+    val usedPercentage: Int,
+    val summary: String
 )
 
 data class ThermalDiagnostic(
@@ -120,6 +127,33 @@ object DeviceDiagnostics {
             isSevereOrCritical = isSevere,
             formattedSummary = summary
         )
+    }
+
+    fun readStorage(): StorageDiagnostic? {
+        return try {
+            val stat = StatFs(Environment.getDataDirectory().path)
+            val total = stat.totalBytes
+            val used = total - stat.availableBytes
+            if (total <= 0) return null
+            val gb = 1024.0 * 1024.0 * 1024.0
+            StorageDiagnostic(
+                usedPercentage = ((used * 100) / total).toInt(),
+                summary = String.format(Locale.US, "%.0f / %.0f GB", used / gb, total / gb)
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun readBatteryPercent(context: Context): Int? {
+        return try {
+            val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+            val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+            if (level >= 0 && scale > 0) (level * 100) / scale else null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun readDeviceSpec(): DeviceSpec {

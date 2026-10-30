@@ -29,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.PictureInPictureAlt
 import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Button
@@ -39,6 +40,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -51,9 +53,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.data.shizuku.ShizukuStatus
 import com.example.data.system.RamDiagnostic
+import com.example.data.system.StorageDiagnostic
 import com.example.data.system.ThermalDiagnostic
 import com.example.ui.components.DevicePanel
 import com.example.ui.components.HeaderBar
+import com.example.ui.components.OverviewRings
 import com.example.ui.navigation.AppScreen
 
 @Composable
@@ -61,6 +65,10 @@ fun HomeScreen(
     shizukuStatus: ShizukuStatus,
     ramDiagnostic: RamDiagnostic?,
     thermalDiagnostic: ThermalDiagnostic?,
+    storageDiagnostic: StorageDiagnostic?,
+    batteryPercent: Int?,
+    overlayEnabled: Boolean,
+    onOverlayToggle: (Boolean) -> Unit,
     isOptimizing: Boolean,
     currentProgressText: String?,
     lastOptimizationSummary: String?,
@@ -128,6 +136,15 @@ fun HomeScreen(
             shizukuStatus = shizukuStatus,
             ramDiagnostic = ramDiagnostic,
             thermalDiagnostic = thermalDiagnostic
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Visão geral: RAM, armazenamento e bateria
+        OverviewRings(
+            ramDiagnostic = ramDiagnostic,
+            storageDiagnostic = storageDiagnostic,
+            batteryPercent = batteryPercent
         )
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -435,6 +452,66 @@ fun HomeScreen(
                     imageVector = Icons.Rounded.ChevronRight,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // Painel flutuante no jogo
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 5.dp)
+                .testTag("overlay_panel_card"),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Rounded.PictureInPictureAlt,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column {
+                        Text(
+                            text = "Painel no jogo",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Aba na lateral da tela que abre um painel sobre o jogo",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Switch(
+                    checked = overlayEnabled,
+                    onCheckedChange = onOverlayToggle,
+                    modifier = Modifier.testTag("overlay_switch")
                 )
             }
         }

@@ -20,6 +20,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.Settings
 import android.util.DisplayMetrics
 import android.util.TypedValue
@@ -36,12 +37,25 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.example.R
+import com.example.data.freefire.FreeFireDetector
+import com.example.data.logs.ActiveAppsCollector
+import com.example.data.shizuku.ShizukuManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.hypot
 
 /**
  * Painel flutuante do jogo.
  *
+ * - Só aparece (e só abre) com o Free Fire em primeiro plano.
  * - Fica recolhido como uma aba na lateral (esquerda ou direita) e pode ser arrastado;
  *   ao soltar, gruda na lateral mais próxima.
  * - 1º toque: a aba aumenta. 2º toque: abre o painel completo.
@@ -63,6 +77,13 @@ class GameOverlayService : Service() {
     private var state = State.COLLAPSED
     private var side = OverlayPrefs.SIDE_RIGHT
     private var snapAnimator: ValueAnimator? = null
+
+    // Estado do jogo: a aba e o painel só existem para o usuário enquanto o jogo está em primeiro plano.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var monitorJob: Job? = null
+    private var collector: ActiveAppsCollector? = null
+    private var gameActive = false
+    private var lastStatusText: String? = null
 
     private val density get() = resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).toInt()
@@ -94,6 +115,7 @@ class GameOverlayService : Service() {
         }
 
         if (tabRoot == null) addTab()
+        startGameMonitor()
         return START_NOT_STICKY
     }
 
@@ -106,6 +128,7 @@ class GameOverlayService : Service() {
     }
 
     override fun onDestroy() {
+        scope.cancel()
         handler.removeCallbacksAndMessages(null)
         snapAnimator?.cancel()
         panelView?.let { runCatching { wm.removeView(it) } }
@@ -130,6 +153,7 @@ class GameOverlayService : Service() {
 
         val root = FrameLayout(this).apply {
             clipChildren = false
+            visibility = View.GONE // só aparece quando o jogo estiver em primeiro plano
             addView(body, FrameLayout.LayoutParams(dp(TAB_BODY_W), dp(TAB_BODY_H)))
         }
         tabRoot = root
@@ -292,7 +316,7 @@ class GameOverlayService : Service() {
     // -------------------------------------------------------------- Painel
 
     private fun openPanel() {
-        if (state == State.OPEN || panelView != null) return
+        if (!gameActive || state == State.OPEN || panelView != null) return
         handler.removeCallbacks(peekReset)
         state = State.OPEN
 
@@ -325,7 +349,7 @@ class GameOverlayService : Service() {
             runCatching { wm.removeView(view) }
             if (panelView === view) panelView = null
             panelParams = null
-            tabRoot?.visibility = View.VISIBLE
+            tabRoot?.visibility = if (gameActive) View.VISIBLE else View.GONE
             setPeekInstant(false)
         }
 
@@ -449,6 +473,50 @@ class GameOverlayService : Service() {
         }
     }
 
+    // ------------------------------------------------------- Estado do jogo
+
+    private val gamePackages = setOf(
+        FreeFireDetector.PKG_FREE_FIRE_STANDARD,
+        FreeFireDetector.PKG_FREE_FIRE_MAX
+    )
+
+    /** Consulta periodicamente o app em primeiro plano (mesmo mecanismo da aba Logs). */
+    private fun startGameMonitor() {
+        if (monitorJob?.isActive == true) return
+        val detector = collector ?: ActiveAppsCollector(this, ShizukuManager(applicationContext))
+            .also { collector = it }
+        val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+        monitorJob = scope.launch {
+            while (isActive) {
+                if (power.isInteractive) {
+                    val result = withContext(Dispatchers.IO) { detector.foreground() }
+                    updateStatusText(
+                        when {
+                            !result.canDetect -> STATUS_CANNOT_DETECT
+                            result.packageName in gamePackages -> STATUS_GAME_OPEN
+                            else -> STATUS_WAITING
+                        }
+                    )
+                    setGameActive(result.packageName in gamePackages)
+                }
+                delay(GAME_POLL_MS)
+            }
+        }
+    }
+
+    private fun setGameActive(active: Boolean) {
+        if (active == gameActive) return
+        gameActive = active
+        if (active) {
+            tabRoot?.visibility = View.VISIBLE
+            setPeekInstant(false)
+        } else {
+            closePanel(animated = false)
+            tabRoot?.visibility = View.GONE
+            setPeekInstant(false)
+        }
+    }
+
     // ------------------------------------------------------------- Utilidades
 
     private fun overlayParams(w: Int, h: Int) = WindowManager.LayoutParams(
@@ -480,6 +548,31 @@ class GameOverlayService : Service() {
         }
     }
 
+    private fun updateStatusText(text: String) {
+        if (text == lastStatusText) return
+        lastStatusText = text
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(NOTIFICATION_ID, buildNotification(text))
+    }
+
+    private fun buildNotification(text: String): Notification {
+        val stopIntent = PendingIntent.getService(
+            this,
+            0,
+            Intent(this, GameOverlayService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_overlay_bolt)
+            .setContentTitle("Painel do jogo ativo")
+            .setContentText(text)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .addAction(0, "Fechar painel", stopIntent)
+            .build()
+    }
+
     private fun startForegroundCompat() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -487,19 +580,8 @@ class GameOverlayService : Service() {
                 NotificationChannel(CHANNEL_ID, "Painel do jogo", NotificationManager.IMPORTANCE_MIN)
             )
         }
-        val stopIntent = PendingIntent.getService(
-            this,
-            0,
-            Intent(this, GameOverlayService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_overlay_bolt)
-            .setContentTitle("Painel do jogo ativo")
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_MIN)
-            .addAction(0, "Fechar painel", stopIntent)
-            .build()
+        val text = lastStatusText ?: STATUS_WAITING
+        val notification = buildNotification(text)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
@@ -520,6 +602,12 @@ class GameOverlayService : Service() {
         private const val TAB_WINDOW_H = 84
         private const val PANEL_W = 260
         private const val PEEK_TIMEOUT_MS = 3000L
+        private const val GAME_POLL_MS = 1_500L
+
+        private const val STATUS_WAITING = "Aguardando o Free Fire abrir"
+        private const val STATUS_GAME_OPEN = "Free Fire aberto: painel disponível"
+        private const val STATUS_CANNOT_DETECT =
+            "Para detectar o jogo, conceda o acesso ao uso ou conecte o Shizuku"
 
         private val COLOR_ORANGE = Color.parseColor("#FF5E00")
         private val COLOR_SURFACE = Color.parseColor("#12151D")

@@ -29,6 +29,9 @@ data class ActiveAppsSnapshot(
 
 data class KillResult(val stopped: Boolean, val message: String)
 
+/** [canDetect] é falso quando não há Shizuku nem acesso ao uso: nesse caso o app em primeiro plano é desconhecido. */
+data class ForegroundResult(val canDetect: Boolean, val packageName: String?)
+
 /**
  * Lista apps com processo vivo.
  * - Com Shizuku: processos reais (`ps`) + app em primeiro plano (`dumpsys`).
@@ -54,6 +57,49 @@ class ActiveAppsCollector(
             return ActiveAppsSnapshot(collectForegroundViaUsage(), ActiveSource.USAGE_ACCESS)
         }
         return ActiveAppsSnapshot(emptyList(), ActiveSource.NONE)
+    }
+
+    /**
+     * App em primeiro plano agora (usado pelo painel flutuante para saber se o jogo está aberto).
+     * Com Shizuku usa o `dumpsys`; sem ele, os eventos de uso, lidos de forma incremental.
+     * É leve o bastante para rodar a cada poucos segundos.
+     */
+    fun foreground(): ForegroundResult {
+        if (shizuku.queryCurrentStatus() == ShizukuStatus.CONNECTED) {
+            val res = shizuku.execute(
+                "dumpsys activity activities | grep -E 'topResumedActivity|ResumedActivity' | head -4",
+                FOREGROUND_CMD_TIMEOUT_MS
+            )
+            TOP_REGEX.find(res.stdout)?.groupValues?.get(1)?.let { return ForegroundResult(true, it) }
+        }
+        if (UsageAccess.isGranted(appContext)) {
+            return ForegroundResult(true, foregroundViaUsageEvents())
+        }
+        return ForegroundResult(false, null)
+    }
+
+    private var fgCursor = 0L
+    private val fgResumed = HashMap<String, Long>()
+
+    @Suppress("DEPRECATION")
+    private fun foregroundViaUsageEvents(): String? {
+        val usm = appContext.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val now = System.currentTimeMillis()
+        // Primeira leitura olha para trás; as seguintes só pegam o que é novo (com 2 s de sobreposição,
+        // inofensiva porque reaplicar os mesmos eventos em ordem leva ao mesmo estado).
+        val from = if (fgCursor == 0L) now - FOREGROUND_INITIAL_MS else fgCursor - 2_000L
+        val events = usm.queryEvents(from, now)
+        val event = UsageEvents.Event()
+        while (events.hasNextEvent()) {
+            events.getNextEvent(event)
+            val key = event.packageName + "/" + (event.className ?: "")
+            when (event.eventType) {
+                UsageEvents.Event.MOVE_TO_FOREGROUND -> fgResumed[key] = event.timeStamp
+                UsageEvents.Event.MOVE_TO_BACKGROUND, EVENT_ACTIVITY_STOPPED -> fgResumed.remove(key)
+            }
+        }
+        fgCursor = now
+        return fgResumed.entries.maxByOrNull { it.value }?.key?.substringBefore('/')
     }
 
     /** Encerra via `am force-stop` e confere no `ps` se o processo realmente sumiu. */
@@ -225,6 +271,8 @@ class ActiveAppsCollector(
         private const val SHIZUKU_PKG = "moe.shizuku.privileged.api"
         private const val TOP_MARK = "__TOP__"
         private const val FOREGROUND_WINDOW_MS = 2 * 60 * 60 * 1000L
+        private const val FOREGROUND_INITIAL_MS = 6 * 60 * 60 * 1000L
+        private const val FOREGROUND_CMD_TIMEOUT_MS = 5_000L
         private const val EVENT_ACTIVITY_STOPPED = 23 // UsageEvents.Event.ACTIVITY_STOPPED (API 29)
         private val WHITESPACE = Regex("\\s+")
         private val PACKAGE_REGEX = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$")

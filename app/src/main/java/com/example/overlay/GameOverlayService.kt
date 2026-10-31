@@ -68,7 +68,8 @@ import kotlin.math.roundToInt
 /**
  * Painel flutuante do jogo.
  *
- * - Só aparece (e só abre) com o Free Fire em primeiro plano.
+ * - A aba aparece dentro e fora do jogo; o painel só abre com o Free Fire em primeiro plano.
+ *   Fora do jogo, tocar na aba mostra um aviso pedindo para abrir o jogo.
  * - Fica recolhido como uma aba na lateral (esquerda ou direita) e pode ser arrastado;
  *   ao soltar, gruda na lateral mais próxima.
  * - 1º toque: a aba aumenta. 2º toque: abre o painel completo.
@@ -99,6 +100,12 @@ class GameOverlayService : Service() {
     private var gameActive = false
     private var gamePackage: String? = null
     private var lastStatusText: String? = null
+    private var canDetect = true
+
+    // Aviso "abra o jogo" (centro da tela), mostrado ao tentar abrir o painel fora do jogo.
+    private var modalView: FrameLayout? = null
+    private var modalCard: View? = null
+    private var modalClosing = false
 
     private val density get() = resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).toInt()
@@ -138,6 +145,7 @@ class GameOverlayService : Service() {
         super.onConfigurationChanged(newConfig)
         if (tabRoot == null) return
         if (state == State.OPEN) closePanel(animated = false)
+        hideGameModal(animated = false)
         snapAnimator?.cancel()
         repositionTab()
         // A rotação (ex.: o jogo forçando paisagem) assenta depois do callback: confere de novo.
@@ -158,6 +166,7 @@ class GameOverlayService : Service() {
         scope.cancel()
         handler.removeCallbacksAndMessages(null)
         snapAnimator?.cancel()
+        hideGameModal(animated = false)
         panelView?.let { runCatching { wm.removeView(it) } }
         tabRoot?.let { runCatching { wm.removeView(it) } }
         panelView = null
@@ -180,7 +189,6 @@ class GameOverlayService : Service() {
 
         val root = FrameLayout(this).apply {
             clipChildren = false
-            visibility = View.GONE // só aparece quando o jogo estiver em primeiro plano
             addView(body, FrameLayout.LayoutParams(dp(TAB_BODY_W), dp(TAB_BODY_H)))
         }
         tabRoot = root
@@ -285,7 +293,7 @@ class GameOverlayService : Service() {
     private fun onTabTap() {
         when (state) {
             State.COLLAPSED -> setPeek(true)
-            State.PEEK -> openPanel()
+            State.PEEK -> if (gameActive) openPanel() else showGameModal()
             State.OPEN -> Unit
         }
     }
@@ -418,7 +426,7 @@ class GameOverlayService : Service() {
                 selectedOption = OPTION_NONE
             }
             closing = false
-            tabRoot?.visibility = if (gameActive) View.VISIBLE else View.GONE
+            tabRoot?.visibility = View.VISIBLE
             setPeekInstant(false)
         }
 
@@ -769,6 +777,7 @@ class GameOverlayService : Service() {
             while (isActive) {
                 if (power.isInteractive) {
                     val result = withContext(Dispatchers.IO) { detector.foreground() }
+                    canDetect = result.canDetect
                     updateStatusText(
                         when {
                             !result.canDetect -> STATUS_CANNOT_DETECT
@@ -788,7 +797,7 @@ class GameOverlayService : Service() {
         if (active == gameActive) return
         gameActive = active
         if (active) {
-            tabRoot?.visibility = View.VISIBLE
+            hideGameModal()
             setPeekInstant(false)
             // O jogo costuma abrir em paisagem: recalcula com as medidas atuais e de novo após assentar.
             repositionTab()
@@ -797,8 +806,125 @@ class GameOverlayService : Service() {
             handler.postDelayed(settleReposition, SETTLE_MS * 3)
         } else {
             closePanel(animated = false)
-            tabRoot?.visibility = View.GONE
             setPeekInstant(false)
+        }
+    }
+
+    // ------------------------------------------------- Aviso "abra o jogo"
+
+    private fun showGameModal() {
+        if (modalView != null || gameActive) return
+        setPeek(false)
+        val cut = cutoutInsets()
+        val (sw, _) = screenSize()
+        val card = buildModalCard()
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(MODAL_SCRIM)
+            setPadding(cut.left, cut.top, cut.right, cut.bottom)
+            setOnClickListener { hideGameModal() }
+            alpha = 0f
+            addView(
+                card,
+                FrameLayout.LayoutParams(
+                    minOf(dp(MODAL_WIDTH), (sw * 0.86f).toInt()),
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER
+                )
+            )
+        }
+        card.scaleX = MODAL_START_SCALE
+        card.scaleY = MODAL_START_SCALE
+        val params = overlayParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ).apply {
+            flags = flags or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+        modalView = root
+        modalCard = card
+        modalClosing = false
+        wm.addView(root, params)
+        root.animate().alpha(1f).setDuration(160).setInterpolator(DecelerateInterpolator()).withLayer().start()
+        card.animate().scaleX(1f).scaleY(1f).setDuration(200).setInterpolator(DecelerateInterpolator())
+            .withLayer().start()
+    }
+
+    private fun hideGameModal(animated: Boolean = true) {
+        val view = modalView ?: return
+        val card = modalCard
+        if (modalClosing && animated) return
+
+        fun finish() {
+            runCatching { wm.removeView(view) }
+            if (modalView === view) {
+                modalView = null
+                modalCard = null
+                modalClosing = false
+            }
+        }
+
+        view.animate().cancel()
+        card?.animate()?.cancel()
+        if (!animated) {
+            finish()
+            return
+        }
+        modalClosing = true
+        card?.animate()?.scaleX(MODAL_END_SCALE)?.scaleY(MODAL_END_SCALE)?.setDuration(140)
+            ?.setInterpolator(AccelerateInterpolator())?.withLayer()?.start()
+        view.animate().alpha(0f).setDuration(140).setInterpolator(AccelerateInterpolator())
+            .withLayer().withEndAction { finish() }.start()
+    }
+
+    private fun buildModalCard(): LinearLayout {
+        val title = label(
+            if (canDetect) MODAL_TITLE_OPEN_GAME else MODAL_TITLE_NOT_DETECTED,
+            18f, OverlayColors.TEXT_DARK, bold = true
+        ).apply { gravity = Gravity.CENTER }
+        val message = label(
+            if (canDetect) MODAL_TEXT_OPEN_GAME else STATUS_CANNOT_DETECT,
+            13f, OverlayColors.TEXT_MUTED
+        ).apply {
+            gravity = Gravity.CENTER
+            maxLines = 4
+        }
+        val button = label(MODAL_BUTTON, 13f, Color.WHITE, bold = true).apply {
+            gravity = Gravity.CENTER
+            isClickable = true
+            setOnClickListener { hideGameModal() }
+            val radius = dp(10).toFloat()
+            background = RippleDrawable(
+                ColorStateList.valueOf(Color.parseColor("#33FFFFFF")),
+                GradientDrawable().apply {
+                    cornerRadius = radius
+                    setColor(OverlayColors.ORANGE)
+                },
+                GradientDrawable().apply {
+                    cornerRadius = radius
+                    setColor(Color.WHITE)
+                }
+            )
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            isClickable = true // toques no cartão não fecham o aviso
+            setPadding(dp(20), dp(18), dp(20), dp(18))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(16).toFloat()
+                setColor(OverlayColors.PANEL_FILL)
+                setStroke((1.5f * density).toInt().coerceAtLeast(1), OverlayColors.ORANGE)
+            }
+            addView(title, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(
+                message,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { topMargin = dp(8) }
+            )
+            addView(button, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)).apply { topMargin = dp(16) })
         }
     }
 
@@ -922,6 +1048,16 @@ class GameOverlayService : Service() {
         private const val PEEK_TIMEOUT_MS = 3000L
         private const val GAME_POLL_MS = 1_500L
         private const val SETTLE_MS = 400L
+
+        private const val MODAL_WIDTH = 300
+        private const val MODAL_START_SCALE = 0.92f
+        private const val MODAL_END_SCALE = 0.96f
+        private const val MODAL_SCRIM = 0x99000000.toInt()
+        private const val MODAL_TITLE_OPEN_GAME = "Abra o Free Fire"
+        private const val MODAL_TITLE_NOT_DETECTED = "Jogo não detectado"
+        private const val MODAL_TEXT_OPEN_GAME =
+            "O painel só abre com o jogo aberto. Abra o Free Fire e toque na aba novamente."
+        private const val MODAL_BUTTON = "Entendi"
 
         private const val STATUS_WAITING = "Aguardando o Free Fire abrir"
         private const val STATUS_GAME_OPEN = "Free Fire aberto: painel disponível"

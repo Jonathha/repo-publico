@@ -97,7 +97,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val context = getApplication<Application>().applicationContext
         OverlayPrefs.setEnabled(context, enabled)
         _uiState.update { it.copy(overlayEnabled = enabled) }
-        if (enabled) GameOverlayService.start(context) else GameOverlayService.stop(context)
+        if (enabled) GameOverlayService.start(context, prepareAi = true) else GameOverlayService.stop(context)
     }
 
     /** Reconcilia o estado salvo (ex.: painel fechado pela notificação ou permissão revogada). */

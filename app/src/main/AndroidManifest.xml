@@ -58,7 +58,7 @@
             android:name=".overlay.ScreenCaptureActivity"
             android:exported="false"
             android:excludeFromRecents="true"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+            android:theme="@style/Theme.ScreenCapture" />
 
         <activity
             android:name=".MainActivity"

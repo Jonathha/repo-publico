@@ -67,18 +67,58 @@ internal class AiController(
     private var display: VirtualDisplay? = null
     private var reader: ImageReader? = null
     private var thread: HandlerThread? = null
+    private var captureW = 0
+    private var captureH = 0
     private val busy = AtomicBoolean(false)
     private var lastFrameAt = 0L
     private var messageJob: Job? = null
+    private var permissionAsked = false
+    private var startWhenGranted = false
+    private var messageOnDenied = false
+    private var pendingGrant: (() -> Unit)? = null
+
+    /** Autorização já obtida (a sessão fica guardada mesmo com a análise desligada). */
+    fun isAuthorized(): Boolean = projection != null
 
     fun toggle() {
-        if (_state.value == AiState.OFF) request() else stop()
+        if (_state.value == AiState.OFF) {
+            if (projection != null) beginAnalysis() else request()
+        } else {
+            stop()
+        }
+    }
+
+    /**
+     * Pede o consentimento agora, com o app em primeiro plano (ao ativar o painel), e guarda a
+     * sessão. Assim, dentro do jogo a A.I liga sem abrir o app nem pedir a tela de novo.
+     * [onGranted] roda depois que a captura já está ativa, para abrir o jogo sem interrupção.
+     */
+    fun prepare(onGranted: (() -> Unit)? = null) {
+        if (permissionAsked || projection != null || _state.value != AiState.OFF) return
+        permissionAsked = true
+        startWhenGranted = false
+        messageOnDenied = false
+        pendingGrant = onGranted
+        _state.value = AiState.REQUESTING
+        runCatching { requestPermission() }.onFailure {
+            permissionAsked = false
+            pendingGrant = null
+            _state.value = AiState.OFF
+        }
     }
 
     private fun request() {
         if (_state.value != AiState.OFF) return
+        startWhenGranted = true
+        messageOnDenied = true
+        if (projection != null) {
+            beginAnalysis()
+            return
+        }
+        permissionAsked = true
         _state.value = AiState.REQUESTING
         runCatching { requestPermission() }.onFailure {
+            permissionAsked = false
             _state.value = AiState.OFF
             say(MSG_FAILED)
         }
@@ -86,21 +126,51 @@ internal class AiController(
 
     /** A janela de consentimento voltou (ou foi cancelada). */
     fun onPermission(resultCode: Int, data: Intent?) {
-        if (_state.value != AiState.REQUESTING) return
+        val requested = _state.value == AiState.REQUESTING
+        // Serviço recriado enquanto a janela do sistema estava aberta: aceita o resultado válido
+        // em vez de perder a autorização. Resultado repetido com sessão viva é ignorado.
+        if (!requested && (resultCode != Activity.RESULT_OK || data == null || projection != null)) return
+        val startNow = startWhenGranted
+        startWhenGranted = false
         if (resultCode != Activity.RESULT_OK || data == null) {
             _state.value = AiState.OFF
-            say(MSG_DENIED)
+            permissionAsked = false
+            pendingGrant = null
+            if (messageOnDenied) say(MSG_DENIED)
+            messageOnDenied = false
             return
         }
         val manager = app.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         val created = runCatching { manager.getMediaProjection(resultCode, data) }.getOrNull()
         if (created == null) {
             _state.value = AiState.OFF
+            permissionAsked = false
+            pendingGrant = null
             say(MSG_FAILED)
             return
         }
         projection = created
         created.registerCallback(projectionCallback, Handler(Looper.getMainLooper()))
+        messageOnDenied = false
+        _state.value = AiState.OFF
+        if (startNow) {
+            beginAnalysis()
+        } else if (pendingGrant != null) {
+            // Consentimento pedido ao ativar o painel: a tela já começa a ser capturada e, só
+            // depois de a captura estar de pé, o jogo é aberto (nada de app durante a partida).
+            beginAnalysis()
+            val launch = pendingGrant
+            pendingGrant = null
+            if (_state.value == AiState.LIVE) launch?.invoke()
+        }
+    }
+
+    private fun beginAnalysis() {
+        if (projection == null) {
+            request()
+            return
+        }
+        if (_state.value == AiState.LIVE) return
         _state.value = AiState.LIVE
         startCapture()
     }
@@ -110,70 +180,140 @@ internal class AiController(
             // Encerrada pelo usuário ou pelo sistema: derruba tudo e volta para OFF.
             releaseCapture()
             projection = null
+            permissionAsked = false
+            startWhenGranted = false
+            pendingGrant = null
             _state.value = AiState.OFF
             _boxes.value = emptyList()
         }
     }
 
+    /**
+     * Liga a captura. O Android 14 permite um único VirtualDisplay por sessão de MediaProjection,
+     * então o display é criado uma vez e reaproveitado: na rotação só muda o tamanho/superfície.
+     */
     private fun startCapture() {
         val p = projection ?: return
         val (sw, sh) = screenSize()
         val w = (sw * CAPTURE_SCALE).toInt().coerceAtLeast(MIN_CAPTURE)
         val h = (sh * CAPTURE_SCALE).toInt().coerceAtLeast(MIN_CAPTURE)
         val hr = thread ?: HandlerThread("ai-capture").also { it.start(); thread = it }
-        val imageReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2).apply {
+        val existing = display
+
+        if (existing == null) {
+            val imageReader = newReader(w, h, hr)
+            reader = imageReader
+            display = runCatching {
+                p.createVirtualDisplay(
+                    "ai-capture",
+                    w,
+                    h,
+                    densityDpi,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    imageReader.surface,
+                    null,
+                    null
+                )
+            }.getOrNull() ?: run {
+                closeReader(imageReader)
+                say(MSG_FAILED)
+                _state.value = AiState.OFF
+                return
+            }
+            captureW = w
+            captureH = h
+            return
+        }
+
+        if (w == captureW && h == captureH) {
+            // Mesmo tamanho: o leitor continua ligado e só volta a analisar.
+            return
+        }
+
+        // Rotação/mudança de tamanho: reaproveita o mesmo VirtualDisplay.
+        val imageReader = newReader(w, h, hr)
+        val resized = runCatching {
+            existing.resize(w, h, densityDpi)
+            existing.surface = imageReader.surface
+        }.isSuccess
+        if (!resized) {
+            closeReader(imageReader)
+            say(MSG_FAILED)
+            _state.value = AiState.OFF
+            return
+        }
+        closeReader(reader)
+        reader = imageReader
+        captureW = w
+        captureH = h
+    }
+
+    private fun newReader(w: Int, h: Int, hr: HandlerThread): ImageReader =
+        ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2).apply {
             setOnImageAvailableListener({ r: ImageReader -> onImage(r) }, Handler(hr.looper))
         }
-        reader = imageReader
-        display = p.createVirtualDisplay(
-            "ai-capture",
-            w,
-            h,
-            densityDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader.surface,
-            null,
-            null
-        )
+
+    private fun closeReader(target: ImageReader?) {
+        runCatching {
+            target?.setOnImageAvailableListener(null, null)
+            target?.close()
+        }
     }
 
     /** O display mudou de tamanho/orientação: refaz o espelho no novo tamanho. */
     fun onDisplayChanged() {
         if (_state.value != AiState.LIVE) return
-        releaseCapture()
         startCapture()
     }
 
+    /**
+     * Para a análise e apaga as caixas. A autorização da captura NÃO é descartada: religar a A.I
+     * ou voltar ao jogo não abre a janela de consentimento de novo.
+     */
     fun stop() {
-        if (_state.value == AiState.OFF && projection == null) return
+        startWhenGranted = false
+        pauseCapture()
+        _boxes.value = emptyList()
+        if (_state.value != AiState.OFF) _state.value = AiState.OFF
+    }
+
+    /** Serviço encerrando: aí sim descarta a sessão de captura. */
+    fun release() {
+        startWhenGranted = false
+        pendingGrant = null
         releaseCapture()
         val p = projection
         projection = null
         runCatching { p?.stop() }
         _state.value = AiState.OFF
         _boxes.value = emptyList()
+        messageJob?.cancel()
     }
 
-    fun release() {
-        stop()
-        messageJob?.cancel()
+    /** Pausa a análise sem destruir o VirtualDisplay (que não pode ser recriado). */
+    private fun pauseCapture() {
+        busy.set(false)
     }
 
     private fun releaseCapture() {
         busy.set(false)
         runCatching { display?.release() }
         display = null
-        runCatching {
-            reader?.setOnImageAvailableListener(null, null)
-            reader?.close()
-        }
+        closeReader(reader)
         reader = null
+        captureW = 0
+        captureH = 0
         runCatching { thread?.quitSafely() }
         thread = null
     }
 
     private fun onImage(imageReader: ImageReader) {
         val image = runCatching { imageReader.acquireLatestImage() }.getOrNull() ?: return
+        // Análise desligada: só esvazia a fila para o espelho continuar fluindo.
+        if (_state.value != AiState.LIVE) {
+            image.close()
+            return
+        }
         val now = SystemClock.uptimeMillis()
         // Quadros demais para a heurística: mantém ~10 por segundo e descarta o resto.
         if (now - lastFrameAt < FRAME_INTERVAL_MS || !busy.compareAndSet(false, true)) {
@@ -216,8 +356,12 @@ internal class AiController(
         }
     }
 
+    /** Aviso pontual no painel, sem mexer no estado da captura. */
+    fun warn(text: String) = say(text)
+
     private companion object {
-        const val CAPTURE_SCALE = 0.25f
+        // Metade da resolução real: marcadores distantes continuam com pixels suficientes.
+        const val CAPTURE_SCALE = 0.5f
         const val MIN_CAPTURE = 96
         const val FRAME_INTERVAL_MS = 95L
         const val MESSAGE_MS = 3_500L

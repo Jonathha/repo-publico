@@ -150,6 +150,15 @@ class GameOverlayService : Service() {
             if (resultCode == android.app.Activity.RESULT_OK && data != null) {
                 startForegroundMediaProjection()
             }
+            // Serviço recriado enquanto o consentimento estava aberto: restaura painel e monitor.
+            if (tabRoot == null) {
+                if (!Settings.canDrawOverlays(this)) {
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                addTab()
+                startGameMonitor()
+            }
             ai.onPermission(resultCode, data)
             return START_NOT_STICKY
         }
@@ -163,15 +172,17 @@ class GameOverlayService : Service() {
 
         if (tabRoot == null) addTab()
         startGameMonitor()
+        // Consentimento pedido com o app aberto: a captura já sobe e o jogo abre em seguida.
+        if (intent?.getBooleanExtra(EXTRA_PREPARE_AI, false) == true) ai.prepare { openGameWithCapture() }
         return START_NOT_STICKY
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        aiController?.onDisplayChanged()
         if (tabRoot == null) return
         if (state == State.OPEN) closePanel(animated = false)
         hideGameModal(animated = false)
-        aiController?.onDisplayChanged()
         snapAnimator?.cancel()
         repositionTab()
         // A rotação (ex.: o jogo forçando paisagem) assenta depois do callback: confere de novo.
@@ -1120,7 +1131,10 @@ class GameOverlayService : Service() {
         val cut = cutoutInsets()
         val finalW = (panelRightExpandedW - rightInnerPadding(panelRightExpandedW) - (cut.right + dp(16)))
             .coerceAtLeast(dp(120))
-        val row = AiToggleRowView(this) { ai.toggle() }.also { aiRow = it }
+        val row = AiToggleRowView(this) {
+            // Dentro do jogo a janela de consentimento nunca abre: ela é pedida com o app aberto.
+            if (!ai.isAuthorized() && gameActive) ai.warn(MSG_AI_NEEDS_APP) else ai.toggle()
+        }.also { aiRow = it }
         val status = label("", 10f, OverlayColors.TEXT_MUTED).apply { maxLines = 2 }.also { aiStatusView = it }
         val note = label("", 10f, BoostColors.ERROR, bold = true).apply {
             maxLines = 3
@@ -1162,14 +1176,16 @@ class GameOverlayService : Service() {
     }
 
     private fun renderAi() {
+        val authorized = aiController?.isAuthorized() == true
         val detail = when (aiState) {
-            AiState.OFF -> "Toque para capturar a tela do jogo"
+            AiState.OFF ->
+                if (authorized) "Captura pronta · toque para ligar" else "Toque para capturar a tela do jogo"
             AiState.REQUESTING -> "Aguardando a permissão de captura"
             AiState.LIVE -> if (aiCount == 0) "Captura ativa · procurando oponentes" else "Captura ativa · $aiCount em tela"
         }
         aiRow?.render(on = aiState == AiState.LIVE, busy = aiState == AiState.REQUESTING, detail = detail)
         aiStatusView?.text = when (aiState) {
-            AiState.OFF -> "Caixas desligadas"
+            AiState.OFF -> if (authorized) "Captura autorizada" else "Caixas desligadas"
             AiState.REQUESTING -> "Permissão de captura pendente"
             AiState.LIVE -> if (aiCount == 0) "Nenhum oponente detectado" else "$aiCount oponente(s) na tela"
         }
@@ -1208,6 +1224,22 @@ class GameOverlayService : Service() {
             Intent(this, ScreenCaptureActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         )
+    }
+
+    /**
+     * Consentimento concedido: a captura já está ativa. Só então o jogo é aberto, para a partida
+     * começar com as caixas funcionando e sem nenhum pedido do app por cima do jogo.
+     */
+    private fun openGameWithCapture() {
+        val target = FreeFireDetector.detectInstalledPackages(this)
+            .firstOrNull { it.isInstalled }?.packageName
+        if (target == null) {
+            ai.warn(MSG_AI_GAME_NOT_FOUND)
+            return
+        }
+        handler.postDelayed({
+            if (!FreeFireDetector.launchGame(this, target)) ai.warn(MSG_AI_GAME_LAUNCH_FAILED)
+        }, GAME_LAUNCH_DELAY_MS)
     }
 
     /** Botão discreto de fechar: alvo de toque de 44 dp, círculo visível de 32 dp, no topo do centro. */
@@ -1331,11 +1363,14 @@ class GameOverlayService : Service() {
             handler.removeCallbacks(settleReposition)
             handler.postDelayed(settleReposition, SETTLE_MS)
             handler.postDelayed(settleReposition, SETTLE_MS * 3)
+            // A.I já ligada antes de entrar no jogo: as caixas passam a valer agora.
+            if (aiState != AiState.OFF) showAiOverlay()
         } else {
             closePanel(animated = false)
             setPeekInstant(false)
             // Fora do jogo não há o que analisar: desliga a captura e some com as caixas.
             aiController?.stop()
+            hideAiOverlay()
         }
     }
 
@@ -1602,6 +1637,7 @@ class GameOverlayService : Service() {
         internal const val ACTION_AI_CAPTURE = "com.example.overlay.AI_CAPTURE"
         private const val EXTRA_AI_RESULT_CODE = "ai_result_code"
         private const val EXTRA_AI_DATA = "ai_result_data"
+        private const val EXTRA_PREPARE_AI = "prepare_ai"
         private const val CHANNEL_ID = "game_overlay"
         private const val NOTIFICATION_ID = 4101
 
@@ -1625,6 +1661,7 @@ class GameOverlayService : Service() {
         private const val PEEK_TIMEOUT_MS = 3000L
         private const val GAME_POLL_MS = 1_500L
         private const val SETTLE_MS = 400L
+        private const val GAME_LAUNCH_DELAY_MS = 300L
         private const val EXPAND_EXTRA = 76
         private const val CENTER_MIN_FRACTION = 0.16f
 
@@ -1643,10 +1680,18 @@ class GameOverlayService : Service() {
         private const val STATUS_CANNOT_DETECT =
             "Para detectar o jogo, conceda o acesso ao uso ou conecte o Shizuku"
 
+        private const val MSG_AI_NEEDS_APP =
+            "Capture autorizada só com o app aberto. Abra o app, ative o painel e autorize a tela uma vez."
+
+        private const val MSG_AI_GAME_NOT_FOUND = "Free Fire não encontrado neste aparelho"
+        private const val MSG_AI_GAME_LAUNCH_FAILED = "Não foi possível abrir o Free Fire"
+
         private val COLOR_ORANGE = Color.parseColor("#FF5E00")
 
-        fun start(context: Context) {
-            val intent = Intent(context, GameOverlayService::class.java)
+        fun start(context: Context, prepareAi: Boolean = false) {
+            val intent = Intent(context, GameOverlayService::class.java).apply {
+                if (prepareAi) putExtra(EXTRA_PREPARE_AI, true)
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {

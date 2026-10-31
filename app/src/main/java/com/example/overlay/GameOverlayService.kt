@@ -356,6 +356,13 @@ class GameOverlayService : Service() {
     private var pingView: TextView? = null
     private var volumeStep = -1
 
+    // A.I e Boost só alternam a área de controles da direita para "Em breve" (sem executar nada).
+    private var aiButton: View? = null
+    private var boostButton: View? = null
+    private var controlsView: View? = null
+    private var soonView: View? = null
+    private var selectedOption = OPTION_NONE
+
     private fun panelBaseWidth(sw: Int): Int =
         (sw * 0.30f).toInt().coerceIn(dp(210), dp(280)).coerceAtMost((sw * 0.46f).toInt())
 
@@ -401,6 +408,11 @@ class GameOverlayService : Service() {
                 panelRight = null
                 fpsView = null
                 pingView = null
+                aiButton = null
+                boostButton = null
+                controlsView = null
+                soonView = null
+                selectedOption = OPTION_NONE
             }
             closing = false
             tabRoot?.visibility = if (gameActive) View.VISIBLE else View.GONE
@@ -494,6 +506,7 @@ class GameOverlayService : Service() {
         }
         root.addView(left, FrameLayout.LayoutParams(panelLeftW, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START))
         root.addView(right, FrameLayout.LayoutParams(panelRightW, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END))
+        root.addView(buildCloseButton(cut.top))
         panelLeft = left
         panelRight = right
         return root
@@ -557,8 +570,10 @@ class GameOverlayService : Service() {
             )
         }
 
-        val ai = actionButton("A.I", R.drawable.ic_overlay_ai) { }
-        val boost = actionButton("Boost", R.drawable.ic_overlay_bolt) { }
+        val ai = actionButton("A.I", R.drawable.ic_overlay_ai) { selectOption(OPTION_AI) }
+        val boost = actionButton("Boost", R.drawable.ic_overlay_bolt) { selectOption(OPTION_BOOST) }
+        aiButton = ai
+        boostButton = boost
 
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -604,9 +619,21 @@ class GameOverlayService : Service() {
                 LinearLayout.LayoutParams(dp(40), 0, 1f).apply { topMargin = dp(6) }
             )
         }
+        // As duas áreas já existem e só alternam visibilidade: nada é reconstruído nem se desloca.
+        val soon = label("Em breve", 15f, OverlayColors.TEXT_MUTED, bold = true).apply {
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+            alpha = 0f
+        }
+        controlsView = controls
+        soonView = soon
         val switcher = FrameLayout(this).apply {
             addView(
                 controls,
+                FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            )
+            addView(
+                soon,
                 FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             )
         }
@@ -629,6 +656,42 @@ class GameOverlayService : Service() {
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(10) }
             )
         }
+    }
+
+    /** Tocar de novo na opção já selecionada volta aos controles. */
+    private fun selectOption(option: Int) {
+        selectedOption = if (selectedOption == option) OPTION_NONE else option
+        aiButton?.background = buttonBackground(selectedOption == OPTION_AI)
+        boostButton?.background = buttonBackground(selectedOption == OPTION_BOOST)
+
+        val show = if (selectedOption == OPTION_NONE) controlsView else soonView
+        val hide = if (selectedOption == OPTION_NONE) soonView else controlsView
+        if (show == null || hide == null) return
+        show.animate().cancel()
+        hide.animate().cancel()
+        show.visibility = View.VISIBLE
+        show.animate().alpha(1f).setDuration(120).start()
+        hide.animate().alpha(0f).setDuration(120).withEndAction { hide.visibility = View.GONE }.start()
+    }
+
+    /** Botão discreto de fechar: alvo de toque de 44 dp, círculo visível de 32 dp, no topo do centro. */
+    private fun buildCloseButton(topInset: Int): FrameLayout = FrameLayout(this).apply {
+        isClickable = true
+        setOnClickListener { closePanel() }
+        addView(
+            ImageView(context).apply {
+                setImageResource(R.drawable.ic_overlay_close)
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor("#B3262A35"))
+                }
+            },
+            FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER)
+        )
+    }.also {
+        it.layoutParams = FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.CENTER_HORIZONTAL)
+            .apply { topMargin = dp(6) + topInset }
     }
 
     /** Texto em dp (não acompanha a escala de fonte do sistema, para o painel não quebrar). */
@@ -845,6 +908,9 @@ class GameOverlayService : Service() {
         private const val TAB_WINDOW_W = 40
         private const val TAB_WINDOW_H = 84
         private const val NO_VALUE = "--"
+        private const val OPTION_NONE = 0
+        private const val OPTION_AI = 1
+        private const val OPTION_BOOST = 2
         private const val PING_EVERY_MS = 3_000L
         private const val FPS_EVERY_MS = 1_000L
         private const val PEEK_TIMEOUT_MS = 3000L

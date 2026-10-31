@@ -2,10 +2,12 @@ package com.example.overlay
 
 import android.content.Context
 
-/** Preferências do painel flutuante (ativado, lado da tela e posição vertical). */
+/** Preferências do painel flutuante (ativado, borda da tela e posição ao longo da borda, de 0 a 1). */
 object OverlayPrefs {
     const val SIDE_LEFT = 0
     const val SIDE_RIGHT = 1
+    const val SIDE_TOP = 2 // só em paisagem
+    const val SIDE_BOTTOM = 3 // só em paisagem
 
     private const val FILE = "overlay_prefs"
     private const val KEY_ENABLED = "enabled"

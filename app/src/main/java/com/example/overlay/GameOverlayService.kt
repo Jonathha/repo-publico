@@ -110,8 +110,10 @@ class GameOverlayService : Service() {
     private val density get() = resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).toInt()
 
-    private val winW get() = dp(TAB_WINDOW_W)
-    private val winH get() = dp(TAB_WINDOW_H)
+    // Nas bordas de cima/baixo (só em paisagem) a aba fica deitada: largura e altura se invertem.
+    private val horizontalEdge get() = side == OverlayPrefs.SIDE_TOP || side == OverlayPrefs.SIDE_BOTTOM
+    private val winW get() = dp(if (horizontalEdge) TAB_WINDOW_H else TAB_WINDOW_W)
+    private val winH get() = dp(if (horizontalEdge) TAB_WINDOW_W else TAB_WINDOW_H)
 
     private val peekReset = Runnable { if (state == State.PEEK) setPeek(false) }
 
@@ -159,7 +161,19 @@ class GameOverlayService : Service() {
     /** Recoloca a aba dentro da área visível atual, na lateral e altura salvas. */
     private fun repositionTab() {
         if (tabRoot == null || panelView != null || tabTouchListener.isDragging) return
-        positionTab(OverlayPrefs.side(this), OverlayPrefs.yFraction(this))
+        val (savedSide, savedFraction) = savedPosition()
+        positionTab(savedSide, savedFraction)
+    }
+
+    /** Borda e posição salvas; em retrato, bordas de cima/baixo não existem e volta ao padrão. */
+    private fun savedPosition(): Pair<Int, Float> {
+        val saved = OverlayPrefs.side(this)
+        val (sw, sh) = screenSize()
+        return if (saved >= OverlayPrefs.SIDE_TOP && sh > sw) {
+            OverlayPrefs.SIDE_RIGHT to DEFAULT_EDGE_FRACTION
+        } else {
+            saved to OverlayPrefs.yFraction(this)
+        }
     }
 
     override fun onDestroy() {
@@ -177,7 +191,8 @@ class GameOverlayService : Service() {
     // ---------------------------------------------------------------- Aba
 
     private fun addTab() {
-        side = OverlayPrefs.side(this)
+        val (savedSide, savedFraction) = savedPosition()
+        side = savedSide
 
         val body = FrameLayout(this).apply {
             val icon = ImageView(context).apply {
@@ -201,42 +216,77 @@ class GameOverlayService : Service() {
         applySideStyle()
         root.setOnTouchListener(tabTouchListener)
 
-        val b = tabBounds()
-        params.x = if (side == OverlayPrefs.SIDE_LEFT) b.minX else b.maxX
-        params.y = b.minY + (OverlayPrefs.yFraction(this) * (b.maxY - b.minY)).toInt()
+        placeTab(params, savedFraction)
         wm.addView(root, params)
     }
 
-    private fun positionTab(newSide: Int, yFraction: Float) {
+    /** Coloca a janela na borda atual; [fraction] (0..1) é a posição ao longo da borda. */
+    private fun placeTab(params: WindowManager.LayoutParams, fraction: Float) {
+        val b = tabBounds()
+        val f = fraction.coerceIn(0f, 1f)
+        when (side) {
+            OverlayPrefs.SIDE_LEFT, OverlayPrefs.SIDE_RIGHT -> {
+                params.x = if (side == OverlayPrefs.SIDE_LEFT) b.minX else b.maxX
+                params.y = b.minY + (f * (b.maxY - b.minY)).toInt()
+            }
+            else -> {
+                params.x = b.minX + (f * (b.maxX - b.minX)).toInt()
+                params.y = if (side == OverlayPrefs.SIDE_TOP) b.minY else b.maxY
+            }
+        }
+    }
+
+    private fun positionTab(newSide: Int, fraction: Float) {
         val params = tabParams ?: return
         val root = tabRoot ?: return
         side = newSide
-        val b = tabBounds()
-        params.x = if (side == OverlayPrefs.SIDE_LEFT) b.minX else b.maxX
-        params.y = b.minY + (yFraction.coerceIn(0f, 1f) * (b.maxY - b.minY)).toInt()
         applySideStyle()
+        placeTab(params, fraction)
         setPeekInstant(false)
         wm.updateViewLayout(root, params)
     }
 
-    /** Ajusta forma, encaixe e pivô da aba conforme o lado em que está. */
+    /** Ajusta forma, tamanho, encaixe e pivô da aba conforme a borda em que está. */
     private fun applySideStyle() {
         val body = tabBody ?: return
         val r = dp(10).toFloat()
-        val radii = if (side == OverlayPrefs.SIDE_LEFT) {
-            floatArrayOf(0f, 0f, r, r, r, r, 0f, 0f)
-        } else {
-            floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r)
+        // Cantos arredondados só no lado oposto à borda (ordem: topo-esq, topo-dir, base-dir, base-esq).
+        val radii = when (side) {
+            OverlayPrefs.SIDE_LEFT -> floatArrayOf(0f, 0f, r, r, r, r, 0f, 0f)
+            OverlayPrefs.SIDE_RIGHT -> floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r)
+            OverlayPrefs.SIDE_TOP -> floatArrayOf(0f, 0f, 0f, 0f, r, r, r, r)
+            else -> floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
         }
         body.background = GradientDrawable().apply {
             setColor(COLOR_ORANGE)
             cornerRadii = radii
         }
+        val bodyW = dp(if (horizontalEdge) TAB_BODY_H else TAB_BODY_W)
+        val bodyH = dp(if (horizontalEdge) TAB_BODY_W else TAB_BODY_H)
         val lp = body.layoutParams as FrameLayout.LayoutParams
-        lp.gravity = (if (side == OverlayPrefs.SIDE_LEFT) Gravity.START else Gravity.END) or Gravity.CENTER_VERTICAL
+        lp.width = bodyW
+        lp.height = bodyH
+        lp.gravity = when (side) {
+            OverlayPrefs.SIDE_LEFT -> Gravity.START or Gravity.CENTER_VERTICAL
+            OverlayPrefs.SIDE_RIGHT -> Gravity.END or Gravity.CENTER_VERTICAL
+            OverlayPrefs.SIDE_TOP -> Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            else -> Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        }
         body.layoutParams = lp
-        body.pivotX = if (side == OverlayPrefs.SIDE_LEFT) 0f else dp(TAB_BODY_W).toFloat()
-        body.pivotY = dp(TAB_BODY_H) / 2f
+        body.pivotX = when (side) {
+            OverlayPrefs.SIDE_LEFT -> 0f
+            OverlayPrefs.SIDE_RIGHT -> bodyW.toFloat()
+            else -> bodyW / 2f
+        }
+        body.pivotY = when (side) {
+            OverlayPrefs.SIDE_TOP -> 0f
+            OverlayPrefs.SIDE_BOTTOM -> bodyH.toFloat()
+            else -> bodyH / 2f
+        }
+        tabParams?.let {
+            it.width = winW
+            it.height = winH
+        }
     }
 
     private val slop by lazy { ViewConfiguration.get(this).scaledTouchSlop }
@@ -324,31 +374,71 @@ class GameOverlayService : Service() {
         body.scaleY = scale
     }
 
-    /** Gruda a aba na lateral mais próxima, mantendo a altura. */
+    /**
+     * Gruda a aba na borda mais próxima. Em retrato só existem esquerda e direita; em paisagem
+     * também topo e base. Mantém a posição ao longo da borda.
+     */
     private fun snapToSide() {
         val params = tabParams ?: return
         val root = tabRoot ?: return
-        val (sw, _) = screenSize()
-        val b = tabBounds()
+        val (sw, sh) = screenSize()
         val centerX = params.x + winW / 2
-        side = if (centerX < sw / 2) OverlayPrefs.SIDE_LEFT else OverlayPrefs.SIDE_RIGHT
-        applySideStyle()
+        val centerY = params.y + winH / 2
+        side = if (sw > sh) {
+            val toLeft = centerX
+            val toRight = sw - centerX
+            val toTop = centerY
+            val toBottom = sh - centerY
+            val nearest = minOf(toLeft, toRight, toTop, toBottom)
+            when (nearest) {
+                toLeft -> OverlayPrefs.SIDE_LEFT
+                toRight -> OverlayPrefs.SIDE_RIGHT
+                toTop -> OverlayPrefs.SIDE_TOP
+                else -> OverlayPrefs.SIDE_BOTTOM
+            }
+        } else if (centerX < sw / 2) {
+            OverlayPrefs.SIDE_LEFT
+        } else {
+            OverlayPrefs.SIDE_RIGHT
+        }
+        applySideStyle() // pode trocar o tamanho da janela (aba em pé x deitada)
 
-        val targetX = if (side == OverlayPrefs.SIDE_LEFT) b.minX else b.maxX
+        // Mantém o centro ao trocar de formato e confere os limites com as novas medidas.
+        val b = tabBounds()
+        val startX = (centerX - winW / 2).coerceIn(b.minX, b.maxX)
+        val startY = (centerY - winH / 2).coerceIn(b.minY, b.maxY)
+        params.x = startX
+        params.y = startY
+        wm.updateViewLayout(root, params)
+
+        val targetX = when (side) {
+            OverlayPrefs.SIDE_LEFT -> b.minX
+            OverlayPrefs.SIDE_RIGHT -> b.maxX
+            else -> startX
+        }
+        val targetY = when (side) {
+            OverlayPrefs.SIDE_TOP -> b.minY
+            OverlayPrefs.SIDE_BOTTOM -> b.maxY
+            else -> startY
+        }
         snapAnimator?.cancel()
-        snapAnimator = ValueAnimator.ofInt(params.x, targetX).apply {
+        snapAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 180
             interpolator = DecelerateInterpolator()
             addUpdateListener {
-                params.x = it.animatedValue as Int
+                val t = it.animatedValue as Float
+                params.x = startX + ((targetX - startX) * t).toInt()
+                params.y = startY + ((targetY - startY) * t).toInt()
                 if (tabRoot != null) wm.updateViewLayout(root, params)
             }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
-                    val range = (b.maxY - b.minY).coerceAtLeast(1)
-                    OverlayPrefs.savePosition(
-                        this@GameOverlayService, side, (params.y - b.minY).toFloat() / range
-                    )
+                    val fraction = if (horizontalEdge) {
+                        (params.x - b.minX).toFloat() / (b.maxX - b.minX).coerceAtLeast(1)
+                    } else {
+                        (params.y - b.minY).toFloat() / (b.maxY - b.minY).coerceAtLeast(1)
+                    }
+                    OverlayPrefs.savePosition(this@GameOverlayService, side, fraction)
                 }
             })
             start()
@@ -1039,6 +1129,7 @@ class GameOverlayService : Service() {
         private const val TAB_WINDOW_W = 40
         private const val TAB_WINDOW_H = 84
         private const val PORTRAIT_EDGE_GAP = 24
+        private const val DEFAULT_EDGE_FRACTION = 0.4f
         private const val NO_VALUE = "--"
         private const val OPTION_NONE = 0
         private const val OPTION_AI = 1

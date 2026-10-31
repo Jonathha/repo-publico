@@ -14,6 +14,7 @@ import android.content.pm.ServiceInfo
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -28,6 +29,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
@@ -124,6 +126,18 @@ class GameOverlayService : Service() {
         if (tabRoot == null) return
         if (state == State.OPEN) closePanel(animated = false)
         snapAnimator?.cancel()
+        repositionTab()
+        // A rotação (ex.: o jogo forçando paisagem) assenta depois do callback: confere de novo.
+        handler.removeCallbacks(settleReposition)
+        handler.postDelayed(settleReposition, SETTLE_MS)
+        handler.postDelayed(settleReposition, SETTLE_MS * 3)
+    }
+
+    private val settleReposition = Runnable { repositionTab() }
+
+    /** Recoloca a aba dentro da área visível atual, na lateral e altura salvas. */
+    private fun repositionTab() {
+        if (tabRoot == null || panelView != null || tabTouchListener.isDragging) return
         positionTab(OverlayPrefs.side(this), OverlayPrefs.yFraction(this))
     }
 
@@ -163,9 +177,9 @@ class GameOverlayService : Service() {
         applySideStyle()
         root.setOnTouchListener(tabTouchListener)
 
-        val (sw, sh) = screenSize()
-        params.x = if (side == OverlayPrefs.SIDE_LEFT) 0 else sw - winW
-        params.y = (OverlayPrefs.yFraction(this) * (sh - winH)).toInt().coerceIn(0, (sh - winH).coerceAtLeast(0))
+        val b = tabBounds()
+        params.x = if (side == OverlayPrefs.SIDE_LEFT) b.minX else b.maxX
+        params.y = b.minY + (OverlayPrefs.yFraction(this) * (b.maxY - b.minY)).toInt()
         wm.addView(root, params)
     }
 
@@ -173,9 +187,9 @@ class GameOverlayService : Service() {
         val params = tabParams ?: return
         val root = tabRoot ?: return
         side = newSide
-        val (sw, sh) = screenSize()
-        params.x = if (side == OverlayPrefs.SIDE_LEFT) 0 else sw - winW
-        params.y = (yFraction * (sh - winH)).toInt().coerceIn(0, (sh - winH).coerceAtLeast(0))
+        val b = tabBounds()
+        params.x = if (side == OverlayPrefs.SIDE_LEFT) b.minX else b.maxX
+        params.y = b.minY + (yFraction.coerceIn(0f, 1f) * (b.maxY - b.minY)).toInt()
         applySideStyle()
         setPeekInstant(false)
         wm.updateViewLayout(root, params)
@@ -209,6 +223,7 @@ class GameOverlayService : Service() {
         private var startX = 0
         private var startY = 0
         private var dragging = false
+        val isDragging get() = dragging
 
         override fun onTouch(v: View, e: MotionEvent): Boolean {
             val params = tabParams ?: return false
@@ -232,9 +247,9 @@ class GameOverlayService : Service() {
                         setPeekInstant(false)
                     }
                     if (dragging) {
-                        val (sw, sh) = screenSize()
-                        params.x = (startX + dx).toInt().coerceIn(0, (sw - winW).coerceAtLeast(0))
-                        params.y = (startY + dy).toInt().coerceIn(0, (sh - winH).coerceAtLeast(0))
+                        val b = tabBounds()
+                        params.x = (startX + dx).toInt().coerceIn(b.minX, b.maxX)
+                        params.y = (startY + dy).toInt().coerceIn(b.minY, b.maxY)
                         wm.updateViewLayout(root, params)
                     }
                 }
@@ -289,12 +304,13 @@ class GameOverlayService : Service() {
     private fun snapToSide() {
         val params = tabParams ?: return
         val root = tabRoot ?: return
-        val (sw, sh) = screenSize()
+        val (sw, _) = screenSize()
+        val b = tabBounds()
         val centerX = params.x + winW / 2
         side = if (centerX < sw / 2) OverlayPrefs.SIDE_LEFT else OverlayPrefs.SIDE_RIGHT
         applySideStyle()
 
-        val targetX = if (side == OverlayPrefs.SIDE_LEFT) 0 else sw - winW
+        val targetX = if (side == OverlayPrefs.SIDE_LEFT) b.minX else b.maxX
         snapAnimator?.cancel()
         snapAnimator = ValueAnimator.ofInt(params.x, targetX).apply {
             duration = 180
@@ -305,8 +321,10 @@ class GameOverlayService : Service() {
             }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
-                    val range = (sh - winH).coerceAtLeast(1)
-                    OverlayPrefs.savePosition(this@GameOverlayService, side, params.y.toFloat() / range)
+                    val range = (b.maxY - b.minY).coerceAtLeast(1)
+                    OverlayPrefs.savePosition(
+                        this@GameOverlayService, side, (params.y - b.minY).toFloat() / range
+                    )
                 }
             })
             start()
@@ -510,6 +528,11 @@ class GameOverlayService : Service() {
         if (active) {
             tabRoot?.visibility = View.VISIBLE
             setPeekInstant(false)
+            // O jogo costuma abrir em paisagem: recalcula com as medidas atuais e de novo após assentar.
+            repositionTab()
+            handler.removeCallbacks(settleReposition)
+            handler.postDelayed(settleReposition, SETTLE_MS)
+            handler.postDelayed(settleReposition, SETTLE_MS * 3)
         } else {
             closePanel(animated = false)
             tabRoot?.visibility = View.GONE
@@ -534,6 +557,31 @@ class GameOverlayService : Service() {
         PixelFormat.TRANSLUCENT
     ).apply {
         gravity = Gravity.TOP or Gravity.START
+    }
+
+    /** Faixa de posições em que a janela da aba fica inteira na área visível (fora de recortes da tela). */
+    private class TabBounds(val minX: Int, val maxX: Int, val minY: Int, val maxY: Int)
+
+    private fun tabBounds(): TabBounds {
+        val (sw, sh) = screenSize()
+        val cut = cutoutInsets()
+        val minX = cut.left.coerceAtLeast(0)
+        val minY = cut.top.coerceAtLeast(0)
+        return TabBounds(
+            minX = minX,
+            maxX = (sw - cut.right - winW).coerceAtLeast(minX),
+            minY = minY,
+            maxY = (sh - cut.bottom - winH).coerceAtLeast(minY)
+        )
+    }
+
+    /** Recorte da tela (notch/câmera) na orientação atual; vazio antes do Android 11. */
+    private fun cutoutInsets(): Rect {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val i = wm.currentWindowMetrics.windowInsets.getInsets(WindowInsets.Type.displayCutout())
+            return Rect(i.left, i.top, i.right, i.bottom)
+        }
+        return Rect()
     }
 
     private fun screenSize(): Pair<Int, Int> {
@@ -603,6 +651,7 @@ class GameOverlayService : Service() {
         private const val PANEL_W = 260
         private const val PEEK_TIMEOUT_MS = 3000L
         private const val GAME_POLL_MS = 1_500L
+        private const val SETTLE_MS = 400L
 
         private const val STATUS_WAITING = "Aguardando o Free Fire abrir"
         private const val STATUS_GAME_OPEN = "Free Fire aberto: painel disponível"

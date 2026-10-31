@@ -39,6 +39,7 @@ import kotlinx.coroutines.delay
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.data.shizuku.ShizukuStatus
 import com.example.ui.components.BottomNavBar
 import com.example.ui.components.OverlayDialogState
 import com.example.ui.components.OverlayPermissionDialog
@@ -77,7 +78,23 @@ fun MainApp(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var pendingOverlay by rememberSaveable { mutableStateOf(false) }
+    var pendingBrightness by rememberSaveable { mutableStateOf(false) }
     var overlayDialog by rememberSaveable { mutableStateOf(OverlayDialogState.NONE) }
+
+    // Etapas opcionais depois de ativar o painel: brilho (configurações do Android) e, por fim, FPS (Shizuku).
+    fun requestOptionalAccess() {
+        if (!Settings.System.canWrite(context)) {
+            pendingBrightness = true
+            context.startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                    Uri.parse("package:${context.packageName}")
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } else {
+            viewModel.requestShizukuPermission()
+        }
+    }
 
     // Ao voltar da tela de permissão, conclui a ativação; também reconcilia o estado salvo.
     DisposableEffect(lifecycleOwner) {
@@ -86,7 +103,17 @@ fun MainApp(
                 if (pendingOverlay) {
                     // Só ativa se a permissão foi realmente concedida; a espera termina em qualquer caso.
                     pendingOverlay = false
-                    if (Settings.canDrawOverlays(context)) viewModel.setOverlayEnabled(true) else viewModel.syncOverlayState()
+                    if (Settings.canDrawOverlays(context)) {
+                        viewModel.setOverlayEnabled(true)
+                        requestOptionalAccess()
+                    } else {
+                        viewModel.syncOverlayState()
+                    }
+                } else if (pendingBrightness) {
+                    // Voltou da tela de brilho (concedido ou não): segue para o pedido do FPS.
+                    pendingBrightness = false
+                    viewModel.syncOverlayState()
+                    viewModel.requestShizukuPermission()
                 } else {
                     viewModel.syncOverlayState()
                 }
@@ -109,6 +136,7 @@ fun MainApp(
     val requestOverlayAccess: () -> Unit = {
         if (Settings.canDrawOverlays(context)) {
             viewModel.setOverlayEnabled(true)
+            requestOptionalAccess()
         } else {
             pendingOverlay = true
             context.startActivity(
@@ -132,7 +160,9 @@ fun MainApp(
                 pendingOverlay = false
                 viewModel.setOverlayEnabled(false)
             }
-            needsNotifications() || !Settings.canDrawOverlays(context) -> overlayDialog = OverlayDialogState.ASK
+            needsNotifications() || !Settings.canDrawOverlays(context) ||
+                !Settings.System.canWrite(context) || uiState.shizukuStatus == ShizukuStatus.NO_PERMISSION ->
+                overlayDialog = OverlayDialogState.ASK
             else -> viewModel.setOverlayEnabled(true)
         }
     }
@@ -141,6 +171,8 @@ fun MainApp(
         state = overlayDialog,
         needsNotifications = needsNotifications(),
         needsOverlay = !Settings.canDrawOverlays(context),
+        needsBrightness = !Settings.System.canWrite(context),
+        fpsStatus = uiState.shizukuStatus,
         onContinue = {
             overlayDialog = OverlayDialogState.NONE
             if (needsNotifications()) {

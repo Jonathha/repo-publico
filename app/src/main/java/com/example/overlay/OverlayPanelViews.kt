@@ -95,10 +95,14 @@ internal class SlantedPanel(
     }
 }
 
-/** Barra de nível vertical (preenche de baixo para cima), arrastável. [onLevel] recebe 0..1. */
+/**
+ * Barra de nível vertical (preenche de baixo para cima), arrastável. [onLevel] recebe 0..1 e
+ * [onTouching] avisa quando o dedo entra/sai. Desativada (isEnabled = false) ignora toques.
+ */
 internal class VerticalLevelView(
     context: Context,
     initialLevel: Float,
+    private val onTouching: (Boolean) -> Unit = {},
     private val onLevel: (Float) -> Unit
 ) : View(context) {
 
@@ -110,6 +114,15 @@ internal class VerticalLevelView(
     private val bounds = RectF()
 
     private var level = initialLevel.coerceIn(0f, 1f)
+
+    var isTouching = false
+        private set
+
+    /** Atualiza o nível por fora (ex.: botões de volume), sem disparar [onLevel]. */
+    fun setLevel(value: Float) {
+        level = value.coerceIn(0f, 1f)
+        invalidate()
+    }
 
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat()
@@ -130,14 +143,20 @@ internal class VerticalLevelView(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (!isEnabled) return false
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
+                isTouching = true
+                onTouching(true)
                 update(event.y)
             }
             MotionEvent.ACTION_MOVE -> update(event.y)
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 parent?.requestDisallowInterceptTouchEvent(false)
+                isTouching = false
+                onTouching(false)
+            }
         }
         return true
     }

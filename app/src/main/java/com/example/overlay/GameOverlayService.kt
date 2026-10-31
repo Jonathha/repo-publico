@@ -456,6 +456,14 @@ class GameOverlayService : Service() {
     private var fpsView: TextView? = null
     private var pingView: TextView? = null
     private var volumeStep = -1
+    private var volumeMax = 1
+    private var brightnessValue = -1
+    private var brightnessModeChecked = false
+    private var volumeSlider: VerticalLevelView? = null
+    private var volumePercent: TextView? = null
+    private var brightnessSlider: VerticalLevelView? = null
+    private var brightnessPercent: TextView? = null
+    private val audio by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
     // A.I e Boost só alternam a área de controles da direita para "Em breve" (sem executar nada).
     private var aiButton: View? = null
@@ -509,6 +517,11 @@ class GameOverlayService : Service() {
                 panelRight = null
                 fpsView = null
                 pingView = null
+                volumeSlider = null
+                volumePercent = null
+                brightnessSlider = null
+                brightnessPercent = null
+                brightnessModeChecked = false
                 aiButton = null
                 boostButton = null
                 controlsView = null
@@ -573,6 +586,13 @@ class GameOverlayService : Service() {
                     val fps = if (pkg == null) null else withContext(Dispatchers.IO) { meter.sample(pkg) }
                     fpsView?.text = fps?.toString() ?: NO_VALUE
                     delay(FPS_EVERY_MS)
+                }
+            }
+            launch {
+                // Mantém as barras em dia quando volume/brilho mudam por fora (botões físicos, sistema).
+                while (isActive) {
+                    syncSliders()
+                    delay(SLIDER_SYNC_MS)
                 }
             }
         }
@@ -697,27 +717,59 @@ class GameOverlayService : Service() {
         }
     }
 
-    /** Direita: latência e a área de controles (volume). */
+    /** Direita: latência e a área de controles (volume e brilho, lado a lado). */
     private fun buildRightContent(): LinearLayout {
         val ping = label(NO_VALUE, 28f, OverlayColors.TEXT_DARK, light = true).also { pingView = it }
 
-        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val maxVolume = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        volumeMax = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
         volumeStep = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
-        val slider = VerticalLevelView(this, volumeStep.toFloat() / maxVolume) { level ->
-            val step = (level * maxVolume).roundToInt().coerceIn(0, maxVolume)
+        val volumeIcon = controlIcon(R.drawable.ic_overlay_volume)
+        val volumeText = label(percentText(volumeStep.toFloat() / volumeMax), 11f, OverlayColors.TEXT_MUTED, bold = true)
+            .also { volumePercent = it }
+        val volume = VerticalLevelView(
+            this,
+            volumeStep.toFloat() / volumeMax,
+            onTouching = { highlightIcon(volumeIcon, it) }
+        ) { level ->
+            val step = (level * volumeMax).roundToInt().coerceIn(0, volumeMax)
+            volumeText.text = percentText(level)
             if (step != volumeStep) {
                 volumeStep = step
                 runCatching { audio.setStreamVolume(AudioManager.STREAM_MUSIC, step, 0) }
             }
+        }.also { volumeSlider = it }
+
+        // Brilho precisa da permissão "Modificar configurações do sistema"; sem ela a barra fica inativa.
+        val canWrite = Settings.System.canWrite(this)
+        brightnessValue = readBrightness()
+        val brightnessIcon = controlIcon(R.drawable.ic_overlay_brightness)
+        val brightnessText = label(
+            if (canWrite) percentText(brightnessLevel(brightnessValue)) else NO_VALUE,
+            11f, OverlayColors.TEXT_MUTED, bold = true
+        ).also { brightnessPercent = it }
+        val brightness = VerticalLevelView(
+            this,
+            brightnessLevel(brightnessValue),
+            onTouching = { highlightIcon(brightnessIcon, it) }
+        ) { level ->
+            brightnessText.text = percentText(level)
+            applyBrightness(level)
+        }.also {
+            it.isEnabled = canWrite
+            brightnessSlider = it
         }
+
         val controls = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_HORIZONTAL
-            addView(label("♪", 18f, OverlayColors.TEXT_MUTED, bold = true))
             addView(
-                slider,
-                LinearLayout.LayoutParams(dp(40), 0, 1f).apply { topMargin = dp(6) }
+                controlColumn(volumeIcon, volume, volumeText),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            )
+            addView(
+                controlColumn(brightnessIcon, brightness, brightnessText).apply { if (!canWrite) alpha = 0.45f },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                    .apply { marginStart = dp(18) }
             )
         }
         // As duas áreas já existem e só alternam visibilidade: nada é reconstruído nem se desloca.
@@ -756,6 +808,88 @@ class GameOverlayService : Service() {
                 switcher,
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(10) }
             )
+        }
+    }
+
+    private fun controlIcon(res: Int): ImageView = ImageView(this).apply {
+        setImageResource(res)
+        setColorFilter(OverlayColors.TEXT_MUTED)
+    }
+
+    /** Ícone sobe de tom e dá um leve zoom enquanto a barra está sendo arrastada. */
+    private fun highlightIcon(icon: ImageView, active: Boolean) {
+        icon.setColorFilter(if (active) OverlayColors.ORANGE else OverlayColors.TEXT_MUTED)
+        val scale = if (active) 1.18f else 1f
+        icon.animate().cancel()
+        icon.animate().scaleX(scale).scaleY(scale).setDuration(120).setInterpolator(DecelerateInterpolator()).start()
+    }
+
+    /** Coluna de controle: ícone em cima, barra no meio, porcentagem embaixo. */
+    private fun controlColumn(icon: ImageView, slider: View, percent: TextView): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(icon, LinearLayout.LayoutParams(dp(20), dp(20)))
+            addView(slider, LinearLayout.LayoutParams(dp(38), 0, 1f).apply { topMargin = dp(8) })
+            addView(
+                percent,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { topMargin = dp(6) }
+            )
+        }
+
+    private fun percentText(level: Float) = "${(level.coerceIn(0f, 1f) * 100).roundToInt()}%"
+
+    // Brilho do sistema (0..255): o mínimo evita deixar a tela apagada sem como enxergar a barra.
+    private fun readBrightness(): Int = runCatching {
+        Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS)
+    }.getOrDefault(BRIGHTNESS_DEFAULT)
+
+    private fun brightnessLevel(value: Int): Float =
+        ((value - BRIGHTNESS_MIN).toFloat() / (BRIGHTNESS_MAX - BRIGHTNESS_MIN)).coerceIn(0f, 1f)
+
+    private fun applyBrightness(level: Float) {
+        val value = (BRIGHTNESS_MIN + level * (BRIGHTNESS_MAX - BRIGHTNESS_MIN)).roundToInt()
+            .coerceIn(BRIGHTNESS_MIN, BRIGHTNESS_MAX)
+        if (value == brightnessValue) return
+        brightnessValue = value
+        runCatching {
+            // No modo automático o sistema ignora o valor manual: passa para manual na 1ª alteração.
+            if (!brightnessModeChecked) {
+                brightnessModeChecked = true
+                val mode = Settings.System.getInt(
+                    contentResolver, Settings.System.SCREEN_BRIGHTNESS_MODE,
+                    Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
+                )
+                if (mode != Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL) {
+                    Settings.System.putInt(
+                        contentResolver, Settings.System.SCREEN_BRIGHTNESS_MODE,
+                        Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
+                    )
+                }
+            }
+            Settings.System.putInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, value)
+        }
+    }
+
+    private fun syncSliders() {
+        val vs = volumeSlider
+        if (vs != null && !vs.isTouching) {
+            val step = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+            if (step != volumeStep) {
+                volumeStep = step
+                vs.setLevel(step.toFloat() / volumeMax)
+                volumePercent?.text = percentText(step.toFloat() / volumeMax)
+            }
+        }
+        val bs = brightnessSlider
+        if (bs != null && bs.isEnabled && !bs.isTouching) {
+            val value = readBrightness()
+            if (value != brightnessValue) {
+                brightnessValue = value
+                bs.setLevel(brightnessLevel(value))
+                brightnessPercent?.text = percentText(brightnessLevel(value))
+            }
         }
     }
 
@@ -1136,6 +1270,10 @@ class GameOverlayService : Service() {
         private const val OPTION_BOOST = 2
         private const val PING_EVERY_MS = 3_000L
         private const val FPS_EVERY_MS = 1_000L
+        private const val SLIDER_SYNC_MS = 500L
+        private const val BRIGHTNESS_MIN = 10
+        private const val BRIGHTNESS_MAX = 255
+        private const val BRIGHTNESS_DEFAULT = 128
         private const val PEEK_TIMEOUT_MS = 3000L
         private const val GAME_POLL_MS = 1_500L
         private const val SETTLE_MS = 400L

@@ -50,6 +50,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.example.R
 import com.example.data.freefire.FreeFireDetector
 import com.example.data.logs.ActiveAppsCollector
@@ -137,6 +138,22 @@ class GameOverlayService : Service() {
             return START_NOT_STICKY
         }
 
+        startAiUpdates()
+
+        if (intent?.action == ACTION_AI_CAPTURE) {
+            startForegroundCompat()
+            @Suppress("DEPRECATION")
+            val data = intent.getParcelableExtra<Intent>(EXTRA_AI_DATA)
+            val resultCode = intent.getIntExtra(EXTRA_AI_RESULT_CODE, 0)
+            // A captura só existe com autorização; o tipo de serviço em primeiro plano com
+            // mediaProjection só pode ser declarado depois que o usuário autorizou.
+            if (resultCode == android.app.Activity.RESULT_OK && data != null) {
+                startForegroundMediaProjection()
+            }
+            ai.onPermission(resultCode, data)
+            return START_NOT_STICKY
+        }
+
         startForegroundCompat()
 
         if (!Settings.canDrawOverlays(this)) {
@@ -154,6 +171,7 @@ class GameOverlayService : Service() {
         if (tabRoot == null) return
         if (state == State.OPEN) closePanel(animated = false)
         hideGameModal(animated = false)
+        aiController?.onDisplayChanged()
         snapAnimator?.cancel()
         repositionTab()
         // A rotação (ex.: o jogo forçando paisagem) assenta depois do callback: confere de novo.
@@ -188,6 +206,8 @@ class GameOverlayService : Service() {
         snapAnimator?.cancel()
         rightAnimator?.cancel()
         boostController?.release()
+        aiController?.release()
+        hideAiOverlay()
         hideGameModal(animated = false)
         panelView?.let { runCatching { wm.removeView(it) } }
         tabRoot?.let { runCatching { wm.removeView(it) } }
@@ -482,6 +502,12 @@ class GameOverlayService : Service() {
     private var controlsView: View? = null
     private var soonView: View? = null
     private var boostView: View? = null
+    private var aiView: View? = null
+    private var aiRow: AiToggleRowView? = null
+    private var aiStatusView: TextView? = null
+    private var aiNote: TextView? = null
+    private var aiState = AiState.OFF
+    private var aiCount = 0
     private var boostNote: TextView? = null
     private var boostRows: Map<BoostOption, BoostRowView> = emptyMap()
     private var panelRightExpandedW = 0
@@ -492,6 +518,15 @@ class GameOverlayService : Service() {
     private val boost: BoostController
         get() = boostController ?: BoostController(applicationContext, shizuku, scope) { gamePackage }
             .also { boostController = it }
+
+    // A.I: captura a tela (MediaProjection) e desenha as caixas dos oponentes num overlay à parte.
+    private var aiController: AiController? = null
+    private val ai: AiController
+        get() = aiController ?: AiController(this, scope) { requestScreenCapture() }
+            .also { aiController = it }
+    private var aiOverlayView: HitboxOverlayView? = null
+    private var aiOverlayParams: WindowManager.LayoutParams? = null
+    private var aiJob: Job? = null
 
     private fun panelBaseWidth(sw: Int): Int =
         (sw * 0.30f).toInt().coerceIn(dp(210), dp(280)).coerceAtMost((sw * 0.46f).toInt())
@@ -550,6 +585,10 @@ class GameOverlayService : Service() {
                 controlsView = null
                 soonView = null
                 boostView = null
+                aiView = null
+                aiRow = null
+                aiStatusView = null
+                aiNote = null
                 boostNote = null
                 boostRows = emptyMap()
                 selectedOption = OPTION_NONE
@@ -635,6 +674,41 @@ class GameOverlayService : Service() {
                 while (isActive) {
                     syncSliders()
                     delay(SLIDER_SYNC_MS)
+                }
+            }
+        }
+        renderAi()
+        aiNote?.let {
+            val text = ai.message.value
+            it.text = text.orEmpty()
+            it.visibility = if (text == null) View.GONE else View.VISIBLE
+        }
+    }
+
+    /** Estado da A.I e caixas ficam vivos com o serviço: continuam certos com o painel fechado. */
+    private fun startAiUpdates() {
+        if (aiJob?.isActive == true) return
+        aiJob = scope.launch {
+            launch {
+                ai.state.collect { state ->
+                    aiState = state
+                    if (state == AiState.OFF) hideAiOverlay() else showAiOverlay()
+                    renderAi()
+                }
+            }
+            launch {
+                ai.boxes.collect { boxes ->
+                    aiCount = boxes.size
+                    aiOverlayView?.setTargets(boxes)
+                    renderAi()
+                }
+            }
+            launch {
+                ai.message.collect { text ->
+                    aiNote?.let {
+                        it.text = text.orEmpty()
+                        it.visibility = if (text == null) View.GONE else View.VISIBLE
+                    }
                 }
             }
         }
@@ -827,6 +901,7 @@ class GameOverlayService : Service() {
         controlsView = controls
         soonView = soon
         val boostPane = buildBoostView().also { boostView = it }
+        val aiPane = buildAiView().also { aiView = it }
         val switcher = FrameLayout(this).apply {
             addView(
                 controls,
@@ -837,6 +912,7 @@ class GameOverlayService : Service() {
                 FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             )
             addView(boostPane)
+            addView(aiPane)
         }
 
         return LinearLayout(this).apply {
@@ -948,11 +1024,11 @@ class GameOverlayService : Service() {
         boostButton?.background = buttonBackground(selectedOption == OPTION_BOOST)
 
         val target = when (selectedOption) {
-            OPTION_AI -> soonView
+            OPTION_AI -> aiView
             OPTION_BOOST -> boostView
             else -> controlsView
         } ?: return
-        for (v in listOfNotNull(controlsView, soonView, boostView)) {
+        for (v in listOfNotNull(controlsView, soonView, boostView, aiView)) {
             v.animate().cancel()
             if (v === target) {
                 v.visibility = View.VISIBLE
@@ -961,7 +1037,7 @@ class GameOverlayService : Service() {
                 v.animate().alpha(0f).setDuration(120).withEndAction { v.visibility = View.GONE }.start()
             }
         }
-        setRightExpanded(selectedOption == OPTION_BOOST)
+        setRightExpanded(selectedOption == OPTION_BOOST || selectedOption == OPTION_AI)
     }
 
     /** Alarga/recolhe a metade direita; largura e recuo mudam juntos, num único ajuste por quadro. */
@@ -1037,6 +1113,101 @@ class GameOverlayService : Service() {
                     .apply { topMargin = dp(4) }
             )
         }
+    }
+
+    /** Painel da A.I: interruptor de captura, estado ao vivo e o aviso de erro. */
+    private fun buildAiView(): View {
+        val cut = cutoutInsets()
+        val finalW = (panelRightExpandedW - rightInnerPadding(panelRightExpandedW) - (cut.right + dp(16)))
+            .coerceAtLeast(dp(120))
+        val row = AiToggleRowView(this) { ai.toggle() }.also { aiRow = it }
+        val status = label("", 10f, OverlayColors.TEXT_MUTED).apply { maxLines = 2 }.also { aiStatusView = it }
+        val note = label("", 10f, BoostColors.ERROR, bold = true).apply {
+            maxLines = 3
+            visibility = View.GONE
+        }.also { aiNote = it }
+        val hint = label(
+            "Analisa a tela do jogo e desenha as caixas. Nada é injetado no jogo.",
+            9f, OverlayColors.TEXT_MUTED
+        ).apply { maxLines = 3 }
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            alpha = 0f
+            layoutParams = FrameLayout.LayoutParams(finalW, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END)
+            addView(label("A.I", 10f, OverlayColors.TEXT_MUTED, bold = true).apply { letterSpacing = 0.1f })
+            addView(
+                row,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { topMargin = dp(4) }
+            )
+            addView(
+                status,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { topMargin = dp(6) }
+            )
+            addView(
+                note,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { topMargin = dp(4) }
+            )
+            addView(View(this@GameOverlayService), LinearLayout.LayoutParams(0, 0, 1f))
+            addView(
+                hint,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { topMargin = dp(6) }
+            )
+        }
+    }
+
+    private fun renderAi() {
+        val detail = when (aiState) {
+            AiState.OFF -> "Toque para capturar a tela do jogo"
+            AiState.REQUESTING -> "Aguardando a permissão de captura"
+            AiState.LIVE -> if (aiCount == 0) "Captura ativa · procurando oponentes" else "Captura ativa · $aiCount em tela"
+        }
+        aiRow?.render(on = aiState == AiState.LIVE, busy = aiState == AiState.REQUESTING, detail = detail)
+        aiStatusView?.text = when (aiState) {
+            AiState.OFF -> "Caixas desligadas"
+            AiState.REQUESTING -> "Permissão de captura pendente"
+            AiState.LIVE -> if (aiCount == 0) "Nenhum oponente detectado" else "$aiCount oponente(s) na tela"
+        }
+    }
+
+    /** Janela própria, transparente e sem toque, só com as caixas por cima do jogo. */
+    private fun showAiOverlay() {
+        if (aiOverlayView != null || !gameActive) return
+        val view = HitboxOverlayView(this)
+        val params = overlayParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ).apply {
+            flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+        runCatching { wm.addView(view, params) }.onSuccess {
+            aiOverlayView = view
+            aiOverlayParams = params
+            view.setTargets(ai.boxes.value)
+        }
+    }
+
+    private fun hideAiOverlay() {
+        val view = aiOverlayView ?: return
+        aiOverlayView = null
+        aiOverlayParams = null
+        runCatching { wm.removeView(view) }
+    }
+
+    private fun requestScreenCapture() {
+        startActivity(
+            Intent(this, ScreenCaptureActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        )
     }
 
     /** Botão discreto de fechar: alvo de toque de 44 dp, círculo visível de 32 dp, no topo do centro. */
@@ -1163,6 +1334,8 @@ class GameOverlayService : Service() {
         } else {
             closePanel(animated = false)
             setPeekInstant(false)
+            // Fora do jogo não há o que analisar: desliga a captura e some com as caixas.
+            aiController?.stop()
         }
     }
 
@@ -1405,8 +1578,30 @@ class GameOverlayService : Service() {
         }
     }
 
+    /** Captura em primeiro plano (exigido a partir do Android 14 para a MediaProjection). */
+    private fun startForegroundMediaProjection() {
+        val notification = buildNotification(lastStatusText ?: STATUS_WAITING)
+        when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            )
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            )
+            else -> startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
     companion object {
         private const val ACTION_STOP = "com.example.overlay.STOP"
+        internal const val ACTION_AI_CAPTURE = "com.example.overlay.AI_CAPTURE"
+        private const val EXTRA_AI_RESULT_CODE = "ai_result_code"
+        private const val EXTRA_AI_DATA = "ai_result_data"
         private const val CHANNEL_ID = "game_overlay"
         private const val NOTIFICATION_ID = 4101
 
@@ -1461,6 +1656,16 @@ class GameOverlayService : Service() {
 
         fun stop(context: Context) {
             context.stopService(Intent(context, GameOverlayService::class.java))
+        }
+
+        /** Resultado da janela de consentimento da captura, de volta ao serviço em execução. */
+        fun startAiCapture(context: Context, resultCode: Int, data: Intent?) {
+            val intent = Intent(context, GameOverlayService::class.java).apply {
+                action = ACTION_AI_CAPTURE
+                putExtra(EXTRA_AI_RESULT_CODE, resultCode)
+                putExtra(EXTRA_AI_DATA, data)
+            }
+            ContextCompat.startForegroundService(context, intent)
         }
     }
 }

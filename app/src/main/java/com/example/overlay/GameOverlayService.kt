@@ -10,25 +10,33 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.content.pm.ServiceInfo
 import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
+import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.text.TextUtils
 import android.util.DisplayMetrics
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.animation.AccelerateInterpolator
@@ -41,7 +49,9 @@ import androidx.core.app.NotificationCompat
 import com.example.R
 import com.example.data.freefire.FreeFireDetector
 import com.example.data.logs.ActiveAppsCollector
+import com.example.data.logs.PingSampler
 import com.example.data.shizuku.ShizukuManager
+import com.example.data.system.GameFpsMeter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -51,8 +61,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.abs
+import java.util.Locale
 import kotlin.math.hypot
+import kotlin.math.roundToInt
 
 /**
  * Painel flutuante do jogo.
@@ -73,7 +84,7 @@ class GameOverlayService : Service() {
     private var tabRoot: FrameLayout? = null
     private var tabBody: FrameLayout? = null
     private var tabParams: WindowManager.LayoutParams? = null
-    private var panelView: LinearLayout? = null
+    private var panelView: FrameLayout? = null
     private var panelParams: WindowManager.LayoutParams? = null
 
     private var state = State.COLLAPSED
@@ -83,8 +94,10 @@ class GameOverlayService : Service() {
     // Estado do jogo: a aba e o painel só existem para o usuário enquanto o jogo está em primeiro plano.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var monitorJob: Job? = null
+    private val shizuku by lazy { ShizukuManager(applicationContext) }
     private var collector: ActiveAppsCollector? = null
     private var gameActive = false
+    private var gamePackage: String? = null
     private var lastStatusText: String? = null
 
     private val density get() = resources.displayMetrics.density
@@ -333,40 +346,63 @@ class GameOverlayService : Service() {
 
     // -------------------------------------------------------------- Painel
 
+    private var panelLeft: View? = null
+    private var panelRight: View? = null
+    private var panelLeftW = 0
+    private var panelRightW = 0
+    private var closing = false
+    private var panelJob: Job? = null
+    private var fpsView: TextView? = null
+    private var pingView: TextView? = null
+    private var volumeStep = -1
+
+    private fun panelBaseWidth(sw: Int): Int =
+        (sw * 0.30f).toInt().coerceIn(dp(210), dp(280)).coerceAtMost((sw * 0.46f).toInt())
+
     private fun openPanel() {
         if (!gameActive || state == State.OPEN || panelView != null) return
         handler.removeCallbacks(peekReset)
         state = State.OPEN
+        closing = false
 
-        val (sw, sh) = screenSize()
-        val panelW = minOf(dp(PANEL_W), sw / 2)
         val view = buildPanel()
-        val params = overlayParams(panelW, sh).apply {
-            x = if (side == OverlayPrefs.SIDE_LEFT) 0 else sw - panelW
-            y = 0
+        val params = overlayParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ).apply {
+            flags = flags or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
         }
         panelView = view
         panelParams = params
 
-        val hidden = if (side == OverlayPrefs.SIDE_LEFT) -panelW.toFloat() else panelW.toFloat()
-        view.translationX = hidden
+        panelLeft?.translationX = -panelLeftW.toFloat()
+        panelRight?.translationX = panelRightW.toFloat()
         wm.addView(view, params)
         tabRoot?.visibility = View.INVISIBLE
-        view.animate()
-            .translationX(0f)
-            .setDuration(200)
-            .setInterpolator(DecelerateInterpolator())
-            .start()
+        animatePanels(open = true)
+        startPanelUpdates()
     }
 
     private fun closePanel(animated: Boolean = true) {
         val view = panelView ?: return
-        val width = view.width.takeIf { it > 0 } ?: dp(PANEL_W)
+        if (closing && animated) return
+        panelJob?.cancel()
+        panelJob = null
 
         fun finish() {
             runCatching { wm.removeView(view) }
-            if (panelView === view) panelView = null
-            panelParams = null
+            if (panelView === view) {
+                panelView = null
+                panelParams = null
+                panelLeft = null
+                panelRight = null
+                fpsView = null
+                pingView = null
+            }
+            closing = false
             tabRoot?.visibility = if (gameActive) View.VISIBLE else View.GONE
             setPeekInstant(false)
         }
@@ -375,120 +411,280 @@ class GameOverlayService : Service() {
             finish()
             return
         }
-        val hidden = if (side == OverlayPrefs.SIDE_LEFT) -width.toFloat() else width.toFloat()
-        view.animate()
-            .translationX(hidden)
-            .setDuration(160)
-            .setInterpolator(AccelerateInterpolator())
-            .withEndAction { finish() }
+        closing = true
+        animatePanels(open = false, onEnd = ::finish)
+    }
+
+    /** Metades entram/saem pelas laterais; o centro permanece vazio. */
+    private fun animatePanels(open: Boolean, onEnd: (() -> Unit)? = null) {
+        val left = panelLeft
+        val right = panelRight
+        if (left == null || right == null) {
+            onEnd?.invoke()
+            return
+        }
+        val duration = if (open) 200L else 160L
+        val interpolator = if (open) DecelerateInterpolator() else AccelerateInterpolator()
+        left.animate().cancel()
+        right.animate().cancel()
+        left.animate()
+            .translationX(if (open) 0f else -panelLeftW.toFloat())
+            .setDuration(duration)
+            .setInterpolator(interpolator)
+            .withLayer()
+            .start()
+        right.animate()
+            .translationX(if (open) 0f else panelRightW.toFloat())
+            .setDuration(duration)
+            .setInterpolator(interpolator)
+            .withLayer()
+            .withEndAction { onEnd?.invoke() }
             .start()
     }
 
-    private fun buildPanel(): LinearLayout {
-        val r = dp(20).toFloat()
-        val radii = if (side == OverlayPrefs.SIDE_LEFT) {
-            floatArrayOf(0f, 0f, r, r, r, r, 0f, 0f)
-        } else {
-            floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r)
-        }
-
-        val title = TextView(this).apply {
-            text = "FF GAME OPTIMIZER"
-            setTextColor(COLOR_ORANGE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-            typeface = Typeface.DEFAULT_BOLD
-            letterSpacing = 0.1f
-        }
-        val subtitle = TextView(this).apply {
-            text = "Painel do jogo"
-            setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            typeface = Typeface.DEFAULT_BOLD
-        }
-        val titles = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(title)
-            addView(subtitle)
-        }
-
-        val minimize = TextView(this).apply {
-            text = if (side == OverlayPrefs.SIDE_LEFT) "‹" else "›"
-            setTextColor(COLOR_TEXT)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(COLOR_SURFACE_VARIANT)
+    /** Ping e FPS ao vivo, só enquanto o painel está aberto (nada roda com ele fechado). */
+    private fun startPanelUpdates() {
+        panelJob?.cancel()
+        val meter = GameFpsMeter(shizuku)
+        panelJob = scope.launch {
+            launch {
+                while (isActive) {
+                    val rtt = withContext(Dispatchers.IO) { PingSampler.measureOnce() }
+                    pingView?.text = rtt?.toString() ?: NO_VALUE
+                    delay(PING_EVERY_MS)
+                }
             }
-            setOnClickListener { closePanel() }
+            launch {
+                while (isActive) {
+                    val pkg = gamePackage
+                    val fps = if (pkg == null) null else withContext(Dispatchers.IO) { meter.sample(pkg) }
+                    fpsView?.text = fps?.toString() ?: NO_VALUE
+                    delay(FPS_EVERY_MS)
+                }
+            }
+        }
+    }
+
+    private fun buildPanel(): FrameLayout {
+        val (sw, _) = screenSize()
+        val cut = cutoutInsets()
+        val base = panelBaseWidth(sw)
+        panelLeftW = base + cut.left
+        panelRightW = base + cut.right
+        val outer = dp(16)
+        val top = dp(14) + cut.top
+        val bottom = dp(18) + cut.bottom
+
+        // Tocar na área vazia do centro (fora das duas metades) fecha o painel.
+        val root = FrameLayout(this).apply { setOnClickListener { closePanel() } }
+
+        val left = SlantedPanel(this, onLeft = true).apply {
+            val inner = ((1f - SlantedPanel.TIP_FRACTION) * panelLeftW).toInt() + dp(10)
+            addView(
+                buildLeftContent().apply { setPadding(cut.left + outer, top, inner, bottom) },
+                FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            )
+        }
+        val right = SlantedPanel(this, onLeft = false).apply {
+            val inner = ((1f - SlantedPanel.TIP_FRACTION) * panelRightW).toInt() + dp(10)
+            addView(
+                buildRightContent().apply { setPadding(inner, top, cut.right + outer, bottom) },
+                FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            )
+        }
+        root.addView(left, FrameLayout.LayoutParams(panelLeftW, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START))
+        root.addView(right, FrameLayout.LayoutParams(panelRightW, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END))
+        panelLeft = left
+        panelRight = right
+        return root
+    }
+
+    /** Esquerda: identificação do jogo, FPS e os dois botões (A.I e Boost). */
+    private fun buildLeftContent(): LinearLayout {
+        val pkg = gamePackage
+        val name = runCatching {
+            pkg?.let { packageManager.getApplicationLabel(packageManager.getApplicationInfo(it, 0)).toString() }
+        }.getOrNull() ?: "Free Fire"
+
+        val icon = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            val drawable = runCatching { pkg?.let { packageManager.getApplicationIcon(it) } }.getOrNull()
+            if (drawable != null) {
+                setImageDrawable(drawable)
+            } else {
+                setBackgroundColor(OverlayColors.ORANGE)
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                setImageResource(R.drawable.ic_overlay_bolt)
+            }
+            clipToOutline = true
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, dp(12).toFloat())
+                }
+            }
+        }
+        val iconColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(icon, LinearLayout.LayoutParams(dp(48), dp(48)))
+            addView(
+                label(name, 10f, OverlayColors.TEXT_DARK).apply {
+                    gravity = Gravity.CENTER
+                    maxLines = 2
+                },
+                LinearLayout.LayoutParams(dp(56), ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) }
+            )
         }
 
-        val header = LinearLayout(this).apply {
+        val fps = label(NO_VALUE, 28f, OverlayColors.TEXT_DARK, light = true).also { fpsView = it }
+        val fpsColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(fps)
+            addView(
+                label("FPS", 13f, OverlayColors.ORANGE, bold = true).apply { letterSpacing = 0.08f },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { topMargin = dp(2) }
+            )
+        }
+        val gameRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(titles, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            addView(minimize, LinearLayout.LayoutParams(dp(36), dp(36)))
+            addView(iconColumn)
+            addView(
+                fpsColumn,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { marginStart = dp(8) }
+            )
         }
 
-        val divider = View(this).apply { setBackgroundColor(COLOR_BORDER) }
+        val ai = actionButton("A.I", R.drawable.ic_overlay_ai) { }
+        val boost = actionButton("Boost", R.drawable.ic_overlay_bolt) { }
 
-        val body = FrameLayout(this).apply {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(label(Build.MODEL.uppercase(Locale.ROOT), 10f, OverlayColors.TEXT_MUTED, bold = true).apply {
+                letterSpacing = 0.1f
+            })
             addView(
-                TextView(context).apply {
-                    text = "Em breve"
-                    setTextColor(COLOR_TEXT_SECONDARY)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                },
-                FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                    Gravity.CENTER
-                )
+                label("JOGO ATIVO", 20f, OverlayColors.ORANGE, bold = true),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { topMargin = dp(2) }
+            )
+            addView(View(context), LinearLayout.LayoutParams(0, 0, 1f))
+            addView(gameRow)
+            addView(View(context), LinearLayout.LayoutParams(0, 0, 1f))
+            addView(ai, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)))
+            addView(
+                boost,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)).apply { topMargin = dp(8) }
+            )
+        }
+    }
+
+    /** Direita: latência e a área de controles (volume). */
+    private fun buildRightContent(): LinearLayout {
+        val ping = label(NO_VALUE, 28f, OverlayColors.TEXT_DARK, light = true).also { pingView = it }
+
+        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val maxVolume = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        volumeStep = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val slider = VerticalLevelView(this, volumeStep.toFloat() / maxVolume) { level ->
+            val step = (level * maxVolume).roundToInt().coerceIn(0, maxVolume)
+            if (step != volumeStep) {
+                volumeStep = step
+                runCatching { audio.setStreamVolume(AudioManager.STREAM_MUSIC, step, 0) }
+            }
+        }
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(label("♪", 18f, OverlayColors.TEXT_MUTED, bold = true))
+            addView(
+                slider,
+                LinearLayout.LayoutParams(dp(40), 0, 1f).apply { topMargin = dp(6) }
+            )
+        }
+        val switcher = FrameLayout(this).apply {
+            addView(
+                controls,
+                FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             )
         }
 
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = GradientDrawable().apply {
-                setColor(COLOR_SURFACE)
-                cornerRadii = radii
-                setStroke(dp(1), COLOR_BORDER)
-            }
-            addView(header)
+            addView(label("LATÊNCIA", 10f, OverlayColors.TEXT_MUTED, bold = true).apply { letterSpacing = 0.1f })
             addView(
-                divider,
-                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply {
-                    topMargin = dp(12)
-                }
+                ping,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { topMargin = dp(2) }
             )
-            addView(body, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-            setOnTouchListener(panelSwipeListener)
+            addView(
+                label("MS", 13f, OverlayColors.ORANGE, bold = true).apply { letterSpacing = 0.08f },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { topMargin = dp(2) }
+            )
+            addView(
+                switcher,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(10) }
+            )
         }
     }
 
-    /** Deslizar o painel em direção à lateral em que ele está encostado minimiza. */
-    private val panelSwipeListener = object : View.OnTouchListener {
-        private var downX = 0f
-        private var downY = 0f
-
-        override fun onTouch(v: View, e: MotionEvent): Boolean {
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    downX = e.rawX
-                    downY = e.rawY
-                }
-
-                MotionEvent.ACTION_UP -> {
-                    val dx = e.rawX - downX
-                    val dy = e.rawY - downY
-                    val toEdge = if (side == OverlayPrefs.SIDE_LEFT) -dx else dx
-                    if (toEdge > dp(48) && abs(dx) > abs(dy)) closePanel()
-                }
-            }
-            return true
+    /** Texto em dp (não acompanha a escala de fonte do sistema, para o painel não quebrar). */
+    private fun label(
+        value: String,
+        size: Float,
+        color: Int,
+        bold: Boolean = false,
+        light: Boolean = false
+    ): TextView = TextView(this).apply {
+        text = value
+        setTextColor(color)
+        setTextSize(TypedValue.COMPLEX_UNIT_DIP, size)
+        typeface = when {
+            bold -> Typeface.DEFAULT_BOLD
+            light -> Typeface.create("sans-serif-light", Typeface.NORMAL)
+            else -> Typeface.DEFAULT
         }
+        includeFontPadding = false
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
+    }
+
+    private fun actionButton(text: String, iconRes: Int, onClick: () -> Unit): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            background = buttonBackground(selected = false)
+            isClickable = true
+            setOnClickListener { onClick() }
+            addView(
+                ImageView(context).apply {
+                    setImageResource(iconRes)
+                    setColorFilter(OverlayColors.ORANGE)
+                },
+                LinearLayout.LayoutParams(dp(16), dp(16))
+            )
+            addView(
+                label(text, 13f, OverlayColors.ORANGE, bold = true).apply { letterSpacing = 0.04f },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { marginStart = dp(6) }
+            )
+        }
+
+    private fun buttonBackground(selected: Boolean): Drawable {
+        val radius = dp(10).toFloat()
+        val shape = GradientDrawable().apply {
+            cornerRadius = radius
+            setColor(if (selected) OverlayColors.ORANGE_SOFT else Color.TRANSPARENT)
+            setStroke((1.5f * density).toInt().coerceAtLeast(1), OverlayColors.ORANGE)
+        }
+        val mask = GradientDrawable().apply {
+            cornerRadius = radius
+            setColor(Color.WHITE)
+        }
+        return RippleDrawable(ColorStateList.valueOf(OverlayColors.ORANGE_SOFT), shape, mask)
     }
 
     // ------------------------------------------------------- Estado do jogo
@@ -501,8 +697,7 @@ class GameOverlayService : Service() {
     /** Consulta periodicamente o app em primeiro plano (mesmo mecanismo da aba Logs). */
     private fun startGameMonitor() {
         if (monitorJob?.isActive == true) return
-        val detector = collector ?: ActiveAppsCollector(this, ShizukuManager(applicationContext))
-            .also { collector = it }
+        val detector = collector ?: ActiveAppsCollector(this, shizuku).also { collector = it }
         val power = getSystemService(Context.POWER_SERVICE) as PowerManager
         monitorJob = scope.launch {
             while (isActive) {
@@ -515,6 +710,7 @@ class GameOverlayService : Service() {
                             else -> STATUS_WAITING
                         }
                     )
+                    if (result.packageName in gamePackages) gamePackage = result.packageName
                     setGameActive(result.packageName in gamePackages)
                 }
                 delay(GAME_POLL_MS)
@@ -648,7 +844,9 @@ class GameOverlayService : Service() {
         private const val PEEK_SCALE = 1.4f
         private const val TAB_WINDOW_W = 40
         private const val TAB_WINDOW_H = 84
-        private const val PANEL_W = 260
+        private const val NO_VALUE = "--"
+        private const val PING_EVERY_MS = 3_000L
+        private const val FPS_EVERY_MS = 1_000L
         private const val PEEK_TIMEOUT_MS = 3000L
         private const val GAME_POLL_MS = 1_500L
         private const val SETTLE_MS = 400L
@@ -659,11 +857,6 @@ class GameOverlayService : Service() {
             "Para detectar o jogo, conceda o acesso ao uso ou conecte o Shizuku"
 
         private val COLOR_ORANGE = Color.parseColor("#FF5E00")
-        private val COLOR_SURFACE = Color.parseColor("#12151D")
-        private val COLOR_SURFACE_VARIANT = Color.parseColor("#181C26")
-        private val COLOR_BORDER = Color.parseColor("#222734")
-        private val COLOR_TEXT = Color.parseColor("#F4F6F9")
-        private val COLOR_TEXT_SECONDARY = Color.parseColor("#8E95A5")
 
         fun start(context: Context) {
             val intent = Intent(context, GameOverlayService::class.java)

@@ -41,18 +41,20 @@ class PingSampler(private val dao: PingDao) {
         dao.deleteOlderThan(System.currentTimeMillis() - RETENTION_MS)
     }
 
-    /** RTT em ms, ou nulo se a conexão falhou/expirou. */
-    private fun measure(): Int? = try {
-        Socket().use { socket ->
-            val t0 = System.nanoTime()
-            socket.connect(InetSocketAddress(HOST, PORT), TIMEOUT_MS)
-            ((System.nanoTime() - t0 + 500_000) / 1_000_000).toInt().coerceAtLeast(1)
-        }
-    } catch (_: IOException) {
-        null
-    }
+    private fun measure(): Int? = measureOnce()
 
     companion object {
+        /** RTT em ms de uma medição avulsa (sem gravar no histórico), ou nulo se a conexão falhou/expirou. */
+        fun measureOnce(): Int? = try {
+            Socket().use { socket ->
+                val t0 = System.nanoTime()
+                socket.connect(InetSocketAddress(HOST, PORT), TIMEOUT_MS)
+                ((System.nanoTime() - t0 + 500_000) / 1_000_000).toInt().coerceAtLeast(1)
+            }
+        } catch (_: IOException) {
+            null
+        }
+
         const val HOST = "1.1.1.1"
         const val PORT = 443
         const val RETENTION_MS = 4 * 24 * 60 * 60 * 1000L

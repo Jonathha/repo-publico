@@ -35,6 +35,7 @@ internal class BoostSwitchView(context: Context) : View(context) {
     private val track = Paint(Paint.ANTI_ALIAS_FLAG)
     private val thumb = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
     private val rect = RectF()
+    private val evaluator = ArgbEvaluator()
     private var progress = 0f
     private var animator: ValueAnimator? = null
 
@@ -67,7 +68,7 @@ internal class BoostSwitchView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
-        track.color = ArgbEvaluator().evaluate(progress, OverlayColors.TRACK, BoostColors.ACCENT) as Int
+        track.color = evaluator.evaluate(progress, OverlayColors.TRACK, BoostColors.ACCENT) as Int
         rect.set(0f, 0f, w, h)
         canvas.drawRoundRect(rect, h / 2f, h / 2f, track)
         val pad = 3f * density

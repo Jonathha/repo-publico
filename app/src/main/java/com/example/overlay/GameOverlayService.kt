@@ -47,6 +47,7 @@ import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.example.R
@@ -185,6 +186,8 @@ class GameOverlayService : Service() {
         scope.cancel()
         handler.removeCallbacksAndMessages(null)
         snapAnimator?.cancel()
+        rightAnimator?.cancel()
+        boostController?.release()
         hideGameModal(animated = false)
         panelView?.let { runCatching { wm.removeView(it) } }
         tabRoot?.let { runCatching { wm.removeView(it) } }
@@ -473,12 +476,22 @@ class GameOverlayService : Service() {
     private var brightnessPercent: TextView? = null
     private val audio by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
-    // A.I e Boost só alternam a área de controles da direita para "Em breve" (sem executar nada).
+    // A.I mostra "Em breve" (sem executar nada); Boost mostra as otimizações e alarga a direita.
     private var aiButton: View? = null
     private var boostButton: View? = null
     private var controlsView: View? = null
     private var soonView: View? = null
+    private var boostView: View? = null
+    private var boostNote: TextView? = null
+    private var boostRows: Map<BoostOption, BoostRowView> = emptyMap()
+    private var panelRightExpandedW = 0
+    private var rightAnimator: ValueAnimator? = null
     private var selectedOption = OPTION_NONE
+
+    private var boostController: BoostController? = null
+    private val boost: BoostController
+        get() = boostController ?: BoostController(applicationContext, shizuku, scope) { gamePackage }
+            .also { boostController = it }
 
     private fun panelBaseWidth(sw: Int): Int =
         (sw * 0.30f).toInt().coerceIn(dp(210), dp(280)).coerceAtMost((sw * 0.46f).toInt())
@@ -515,6 +528,8 @@ class GameOverlayService : Service() {
         if (closing && animated) return
         panelJob?.cancel()
         panelJob = null
+        rightAnimator?.cancel()
+        rightAnimator = null
 
         fun finish() {
             runCatching { wm.removeView(view) }
@@ -534,6 +549,9 @@ class GameOverlayService : Service() {
                 boostButton = null
                 controlsView = null
                 soonView = null
+                boostView = null
+                boostNote = null
+                boostRows = emptyMap()
                 selectedOption = OPTION_NONE
             }
             closing = false
@@ -568,7 +586,7 @@ class GameOverlayService : Service() {
             .withLayer()
             .start()
         right.animate()
-            .translationX(if (open) 0f else panelRightW.toFloat())
+            .translationX(if (open) 0f else maxOf(panelRightW, right.width).toFloat())
             .setDuration(duration)
             .setInterpolator(interpolator)
             .withLayer()
@@ -597,6 +615,22 @@ class GameOverlayService : Service() {
                 }
             }
             launch {
+                // Só reage quando o estado de uma otimização muda (nada de polling).
+                boost.states.collect { states ->
+                    boostRows.forEach { (option, row) ->
+                        row.render(states[option] ?: BoostState.OFF, boost.unsupportedReason(option))
+                    }
+                }
+            }
+            launch {
+                boost.message.collect { text ->
+                    boostNote?.let {
+                        it.text = text.orEmpty()
+                        it.visibility = if (text == null) View.GONE else View.VISIBLE
+                    }
+                }
+            }
+            launch {
                 // Mantém as barras em dia quando volume/brilho mudam por fora (botões físicos, sistema).
                 while (isActive) {
                     syncSliders()
@@ -612,6 +646,10 @@ class GameOverlayService : Service() {
         val base = panelBaseWidth(sw)
         panelLeftW = base + cut.left
         panelRightW = base + cut.right
+        // Ao abrir o Boost a direita alarga (sem invadir o centro, que fecha o painel ao toque).
+        panelRightExpandedW = (panelRightW + dp(EXPAND_EXTRA))
+            .coerceAtMost(sw - panelLeftW - (sw * CENTER_MIN_FRACTION).toInt())
+            .coerceAtLeast(panelRightW)
         val outer = dp(16)
         val top = dp(14) + cut.top
         val bottom = dp(18) + cut.bottom
@@ -788,6 +826,7 @@ class GameOverlayService : Service() {
         }
         controlsView = controls
         soonView = soon
+        val boostPane = buildBoostView().also { boostView = it }
         val switcher = FrameLayout(this).apply {
             addView(
                 controls,
@@ -797,6 +836,7 @@ class GameOverlayService : Service() {
                 soon,
                 FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             )
+            addView(boostPane)
         }
 
         return LinearLayout(this).apply {
@@ -907,14 +947,96 @@ class GameOverlayService : Service() {
         aiButton?.background = buttonBackground(selectedOption == OPTION_AI)
         boostButton?.background = buttonBackground(selectedOption == OPTION_BOOST)
 
-        val show = if (selectedOption == OPTION_NONE) controlsView else soonView
-        val hide = if (selectedOption == OPTION_NONE) soonView else controlsView
-        if (show == null || hide == null) return
-        show.animate().cancel()
-        hide.animate().cancel()
-        show.visibility = View.VISIBLE
-        show.animate().alpha(1f).setDuration(120).start()
-        hide.animate().alpha(0f).setDuration(120).withEndAction { hide.visibility = View.GONE }.start()
+        val target = when (selectedOption) {
+            OPTION_AI -> soonView
+            OPTION_BOOST -> boostView
+            else -> controlsView
+        } ?: return
+        for (v in listOfNotNull(controlsView, soonView, boostView)) {
+            v.animate().cancel()
+            if (v === target) {
+                v.visibility = View.VISIBLE
+                v.animate().alpha(1f).setDuration(120).start()
+            } else if (v.visibility == View.VISIBLE) {
+                v.animate().alpha(0f).setDuration(120).withEndAction { v.visibility = View.GONE }.start()
+            }
+        }
+        setRightExpanded(selectedOption == OPTION_BOOST)
+    }
+
+    /** Alarga/recolhe a metade direita; largura e recuo mudam juntos, num único ajuste por quadro. */
+    private fun setRightExpanded(expand: Boolean) {
+        val right = panelRight ?: return
+        val content = (right as? ViewGroup)?.getChildAt(0) ?: return
+        val lp = right.layoutParams as? FrameLayout.LayoutParams ?: return
+        val to = if (expand) panelRightExpandedW else panelRightW
+        val from = lp.width
+        if (from == to) return
+        rightAnimator?.cancel()
+        rightAnimator = ValueAnimator.ofInt(from, to).apply {
+            duration = 200
+            interpolator = DecelerateInterpolator()
+            addUpdateListener {
+                val w = it.animatedValue as Int
+                lp.width = w
+                content.setPadding(rightInnerPadding(w), content.paddingTop, content.paddingRight, content.paddingBottom)
+                right.layoutParams = lp
+            }
+            start()
+        }
+    }
+
+    private fun rightInnerPadding(w: Int) = ((1f - SlantedPanel.TIP_FRACTION) * w).toInt() + dp(10)
+
+    /**
+     * Lista de otimizações do Boost. Tem largura fixa (a da direita já alargada) e fica ancorada ao
+     * canto: ao alargar, a borda do painel "revela" a lista sem o texto se mover nem reflowar.
+     */
+    private fun buildBoostView(): View {
+        val cut = cutoutInsets()
+        val finalW = (panelRightExpandedW - rightInnerPadding(panelRightExpandedW) - (cut.right + dp(16)))
+            .coerceAtLeast(dp(120))
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val rows = LinkedHashMap<BoostOption, BoostRowView>()
+        BoostOption.values().forEachIndexed { i, option ->
+            if (i > 0) {
+                list.addView(
+                    View(this).apply { setBackgroundColor(BoostColors.DIVIDER) },
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxOf(1, dp(1) / 2))
+                )
+            }
+            val row = BoostRowView(this, option) { boost.toggle(option) }
+            rows[option] = row
+            list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        boostRows = rows
+
+        val scroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(list, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        val note = label("", 10f, BoostColors.ERROR, bold = true).apply {
+            maxLines = 2
+            visibility = View.GONE
+        }.also { boostNote = it }
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            alpha = 0f
+            layoutParams = FrameLayout.LayoutParams(finalW, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END)
+            addView(label("OTIMIZAÇÕES", 10f, OverlayColors.TEXT_MUTED, bold = true).apply { letterSpacing = 0.1f })
+            addView(
+                scroll,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(4) }
+            )
+            addView(
+                note,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { topMargin = dp(4) }
+            )
+        }
     }
 
     /** Botão discreto de fechar: alvo de toque de 44 dp, círculo visível de 32 dp, no topo do centro. */
@@ -1003,6 +1125,7 @@ class GameOverlayService : Service() {
     /** Consulta periodicamente o app em primeiro plano (mesmo mecanismo da aba Logs). */
     private fun startGameMonitor() {
         if (monitorJob?.isActive == true) return
+        boost.onGameActive(gameActive)
         val detector = collector ?: ActiveAppsCollector(this, shizuku).also { collector = it }
         val power = getSystemService(Context.POWER_SERVICE) as PowerManager
         monitorJob = scope.launch {
@@ -1028,6 +1151,7 @@ class GameOverlayService : Service() {
     private fun setGameActive(active: Boolean) {
         if (active == gameActive) return
         gameActive = active
+        boost.onGameActive(active)
         if (active) {
             hideGameModal()
             setPeekInstant(false)
@@ -1306,6 +1430,8 @@ class GameOverlayService : Service() {
         private const val PEEK_TIMEOUT_MS = 3000L
         private const val GAME_POLL_MS = 1_500L
         private const val SETTLE_MS = 400L
+        private const val EXPAND_EXTRA = 76
+        private const val CENTER_MIN_FRACTION = 0.16f
 
         private const val MODAL_WIDTH = 300
         private const val MODAL_START_SCALE = 0.92f

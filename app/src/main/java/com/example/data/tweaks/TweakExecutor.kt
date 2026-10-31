@@ -7,6 +7,7 @@ import com.example.data.shizuku.CommandResult
 import com.example.data.shizuku.ShizukuManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 data class ExecutionResult(
     val tweakId: String,
@@ -22,7 +23,8 @@ class TweakExecutor(
 
     suspend fun applyTweak(
         tweakId: String,
-        targetPackage: String?
+        targetPackage: String?,
+        maxRefreshRate: Float? = null
     ): ExecutionResult = withContext(Dispatchers.IO) {
         val timestamp = System.currentTimeMillis()
         var actionName = "Ajuste $tweakId"
@@ -95,15 +97,16 @@ class TweakExecutor(
                 val combined = "$origPeak,$origMin"
                 backupValueIfNotExists(TweakCatalog.ID_REFRESH_RATE, combined)
 
-                // Try setting to 120Hz or 90Hz
-                result = shizukuManager.execute("settings put system min_refresh_rate 120.0 && settings put system peak_refresh_rate 120.0")
+                // Usa a maior taxa informada pela tela; sem ela, mantém o padrão de 120 Hz.
+                val rate = String.format(Locale.US, "%.1f", maxRefreshRate?.takeIf { it > 0f } ?: 120f)
+                result = shizukuManager.execute("settings put system min_refresh_rate $rate && settings put system peak_refresh_rate $rate")
                 val success = result.isSuccess
                 if (!success && !hadBackup) {
                     tweakDao.removeBackup(tweakId)
                 }
                 logAndReturn(
                     tweakId, actionName, "Sistema", success,
-                    if (success) "Taxa de atualização ajustada para máximo (120Hz/90Hz)." else "Falha: ${result.stderr}",
+                    if (success) "Taxa de atualização ajustada para o máximo ($rate Hz)." else "Falha: ${result.stderr}",
                     timestamp
                 )
             }

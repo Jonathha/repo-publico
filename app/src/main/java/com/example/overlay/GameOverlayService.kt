@@ -2,6 +2,7 @@ package com.example.overlay
 
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
+import android.animation.TimeInterpolator
 import android.animation.ValueAnimator
 import android.app.Notification
 import android.app.NotificationChannel
@@ -18,6 +19,7 @@ import android.graphics.Outline
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
@@ -41,6 +43,7 @@ import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -106,6 +109,8 @@ class GameOverlayService : Service() {
     private var modalView: FrameLayout? = null
     private var modalCard: View? = null
     private var modalClosing = false
+    private var modalScrim: ColorDrawable? = null
+    private var modalAnimator: ValueAnimator? = null
 
     private val density get() = resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).toInt()
@@ -1045,11 +1050,11 @@ class GameOverlayService : Service() {
         val cut = cutoutInsets()
         val (sw, _) = screenSize()
         val card = buildModalCard()
+        val scrim = ColorDrawable(MODAL_SCRIM).apply { alpha = 0 }
         val root = FrameLayout(this).apply {
-            setBackgroundColor(MODAL_SCRIM)
+            background = scrim
             setPadding(cut.left, cut.top, cut.right, cut.bottom)
             setOnClickListener { hideGameModal() }
-            alpha = 0f
             addView(
                 card,
                 FrameLayout.LayoutParams(
@@ -1059,6 +1064,7 @@ class GameOverlayService : Service() {
                 )
             )
         }
+        card.alpha = 0f
         card.scaleX = MODAL_START_SCALE
         card.scaleY = MODAL_START_SCALE
         val params = overlayParams(
@@ -1072,11 +1078,29 @@ class GameOverlayService : Service() {
         }
         modalView = root
         modalCard = card
+        modalScrim = scrim
         modalClosing = false
         wm.addView(root, params)
-        root.animate().alpha(1f).setDuration(160).setInterpolator(DecelerateInterpolator()).withLayer().start()
-        card.animate().scaleX(1f).scaleY(1f).setDuration(200).setInterpolator(DecelerateInterpolator())
-            .withLayer().start()
+        // O fundo escurece só pelo alpha do drawable (sem layer em tela cheia); layer só no cartão.
+        animateScrim(0, 255, 160, DecelerateInterpolator(), null)
+        card.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(200)
+            .setInterpolator(DecelerateInterpolator()).withLayer().start()
+    }
+
+    private fun animateScrim(from: Int, to: Int, duration: Long, interpolator: TimeInterpolator, onEnd: (() -> Unit)?) {
+        val scrim = modalScrim ?: return
+        modalAnimator?.cancel()
+        modalAnimator = ValueAnimator.ofInt(from, to).apply {
+            this.duration = duration
+            this.interpolator = interpolator
+            addUpdateListener { scrim.alpha = it.animatedValue as Int }
+            addListener(object : AnimatorListenerAdapter() {
+                private var cancelled = false
+                override fun onAnimationCancel(animation: Animator) { cancelled = true }
+                override fun onAnimationEnd(animation: Animator) { if (!cancelled) onEnd?.invoke() }
+            })
+            start()
+        }
     }
 
     private fun hideGameModal(animated: Boolean = true) {
@@ -1085,25 +1109,27 @@ class GameOverlayService : Service() {
         if (modalClosing && animated) return
 
         fun finish() {
+            modalAnimator?.cancel()
+            modalAnimator = null
             runCatching { wm.removeView(view) }
             if (modalView === view) {
                 modalView = null
                 modalCard = null
+                modalScrim = null
                 modalClosing = false
             }
         }
 
-        view.animate().cancel()
         card?.animate()?.cancel()
         if (!animated) {
             finish()
             return
         }
         modalClosing = true
-        card?.animate()?.scaleX(MODAL_END_SCALE)?.scaleY(MODAL_END_SCALE)?.setDuration(140)
-            ?.setInterpolator(AccelerateInterpolator())?.withLayer()?.start()
-        view.animate().alpha(0f).setDuration(140).setInterpolator(AccelerateInterpolator())
-            .withLayer().withEndAction { finish() }.start()
+        // Fade linear a partir do alpha atual (sem salto se fechar durante a abertura).
+        card?.animate()?.alpha(0f)?.scaleX(MODAL_END_SCALE)?.scaleY(MODAL_END_SCALE)?.setDuration(140)
+            ?.setInterpolator(LinearInterpolator())?.withLayer()?.start()
+        animateScrim(modalScrim?.alpha ?: 255, 0, 140, LinearInterpolator()) { finish() }
     }
 
     private fun buildModalCard(): LinearLayout {

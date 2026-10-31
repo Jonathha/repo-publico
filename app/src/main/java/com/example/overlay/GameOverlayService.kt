@@ -209,6 +209,9 @@ class GameOverlayService : Service() {
         tabRoot = root
 
         val params = overlayParams(winW, winH)
+        // Sem isso o Android desloca a janela pelas barras do sistema (ex.: barra de status visível) e
+        // x/y deixam de ser coordenadas da tela: a aba passava do limite de baixo ao ser arrastada.
+        params.flags = params.flags or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }

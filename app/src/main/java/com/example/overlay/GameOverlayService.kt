@@ -186,6 +186,9 @@ class GameOverlayService : Service() {
         tabRoot = root
 
         val params = overlayParams(winW, winH)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
         tabParams = params
         applySideStyle()
         root.setOnTouchListener(tabTouchListener)
@@ -824,11 +827,13 @@ class GameOverlayService : Service() {
     private fun tabBounds(): TabBounds {
         val (sw, sh) = screenSize()
         val cut = cutoutInsets()
-        val minX = cut.left.coerceAtLeast(0)
+        // Em retrato, afasta a aba da borda para não colidir com o gesto de voltar lateral.
+        val gap = if (sh > sw) dp(PORTRAIT_EDGE_GAP) else 0
+        val minX = cut.left.coerceAtLeast(0) + gap
         val minY = cut.top.coerceAtLeast(0)
         return TabBounds(
             minX = minX,
-            maxX = (sw - cut.right - winW).coerceAtLeast(minX),
+            maxX = (sw - cut.right - winW - gap).coerceAtLeast(minX),
             minY = minY,
             maxY = (sh - cut.bottom - winH).coerceAtLeast(minY)
         )
@@ -907,6 +912,7 @@ class GameOverlayService : Service() {
         private const val PEEK_SCALE = 1.4f
         private const val TAB_WINDOW_W = 40
         private const val TAB_WINDOW_H = 84
+        private const val PORTRAIT_EDGE_GAP = 24
         private const val NO_VALUE = "--"
         private const val OPTION_NONE = 0
         private const val OPTION_AI = 1
